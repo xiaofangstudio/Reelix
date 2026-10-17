@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-in-out-quad",
+  "name": "二次缓入缓出",
+  "nameEn": "ease-in-out-quad",
+  "category": "quad",
+  "categoryLabel": "二次",
+  "bezier": [
+    0.45,
+    0,
+    0.55,
+    1
+  ],
+  "builtin": false,
+  "note": "平方对称缓动"
+}

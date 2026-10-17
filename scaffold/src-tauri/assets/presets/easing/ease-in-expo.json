@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-in-expo",
+  "name": "指数缓入",
+  "nameEn": "ease-in-expo",
+  "category": "expo",
+  "categoryLabel": "指数",
+  "bezier": [
+    0.7,
+    0,
+    0.84,
+    0
+  ],
+  "builtin": false,
+  "note": "指数加速，极陡"
+}

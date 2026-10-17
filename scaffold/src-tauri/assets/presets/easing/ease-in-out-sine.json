@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-in-out-sine",
+  "name": "正弦缓入缓出",
+  "nameEn": "ease-in-out-sine",
+  "category": "sine",
+  "categoryLabel": "正弦",
+  "bezier": [
+    0.37,
+    0,
+    0.63,
+    1
+  ],
+  "builtin": false,
+  "note": "正弦族对称缓动"
+}

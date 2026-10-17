@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-in-cubic",
+  "name": "三次缓入",
+  "nameEn": "ease-in-cubic",
+  "category": "cubic",
+  "categoryLabel": "三次",
+  "bezier": [
+    0.32,
+    0,
+    0.67,
+    0
+  ],
+  "builtin": false,
+  "note": "立方加速，比二次更陡"
+}

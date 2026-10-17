@@ -1,0 +1,33 @@
+[package]
+name = "reelix-mcp"
+version = "0.1.0"
+description = "Reelix 的 MCP 服务（标准输入输出，独立进程，不随产品打包）"
+authors = ["小方工作室"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.75"
+
+# 独立进程，只讲 stdio，不开端口、不联网、不接大模型。
+# 它复用 reelix 库里的纯逻辑（工程读写 / 时间线 / 效果图 / 关键帧），
+# 但**不随产品打包进 MSI**：Tauri 只打 `reelix` 那个主程序。
+[[bin]]
+name = "reelix-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# 复用后端逻辑的唯一入口；包名是 reelix，库名是 reelix_lib。
+# default-features = false 关掉 `desktop`，即不拉 tauri / webview2——
+# 否则这个普通命令行进程会因缺少 Tauri 链接参数而链接失败。
+reelix_lib = { package = "reelix", path = "../src-tauri", default-features = false }
+serde = { version = "1", features = ["derive"] }
+# JSON-RPC 的全部编解码只用它——协议手写，不引任何 MCP 第三方 crate。
+serde_json = "1"
+
+[profile.release]
+# 与主程序同一套体积纪律：这是个命令行小工具，能小就小。
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+incremental = false

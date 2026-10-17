@@ -1,0 +1,121 @@
+//! Reelix 后端入口。
+//!
+//! 职责边界：所有重活（解码、合成、导出、文件读写）都在这一侧；
+//! 前端只通过 `commands` 里的命令与这里交互，拿到的永远是算好的结果。
+//!
+//! 模块划分见 `docs/03-技术架构.md` 第三节。
+//!
+//! 本库有两种用法：
+//! - **桌面外壳**（默认 feature `desktop`）：`commands` + [`run`] 走 tauri。
+//! - **纯逻辑**（`default-features = false`）：只导出 `project / timeline / graph /
+//!   keyframe / compositor / history / storage / media` 这些不依赖 tauri 的模块，
+//!   供 `reelix-mcp` 复用，避免把 webview2 的 C++ 符号拖进命令行进程。
+
+#[cfg(feature = "desktop")]
+pub mod commands;
+pub mod compositor;
+pub mod graph;
+pub mod history;
+pub mod keyframe;
+pub mod media;
+pub mod project;
+pub mod state;
+pub mod storage;
+pub mod timeline;
+pub mod tracking;
+
+#[cfg(feature = "desktop")]
+use state::AppState;
+
+/// 启动 Tauri：装配全局状态、注册系统对话框插件、挂上全部命令。
+#[cfg(feature = "desktop")]
+pub fn run() {
+    tauri::Builder::default()
+        // 只在用户主动保存/打开项目时弹系统对话框，没有网络行为。
+        .plugin(tauri_plugin_dialog::init())
+        .manage(AppState::default())
+        .invoke_handler(tauri::generate_handler![
+            // 项目
+            commands::project::new_project,
+            commands::project::open_project,
+            commands::project::save_project,
+            commands::project::get_project,
+            commands::project::get_project_path,
+            commands::project::close_project,
+            // 系统文件对话框
+            commands::dialog::pick_media_files,
+            commands::dialog::pick_project_file,
+            commands::dialog::pick_save_path,
+            // 素材
+            commands::media::import_media,
+            commands::media::probe_media,
+            commands::media::relink_media,
+            commands::media::remove_media,
+            commands::media::generate_thumbnail,
+            // 音频：波形 / 录音 / 资源管理器定位
+            commands::audio::extract_waveform,
+            commands::audio::save_recording,
+            commands::audio::reveal_path,
+            // 时间线
+            commands::timeline::add_clip,
+            commands::timeline::move_clip,
+            commands::timeline::trim_clip,
+            commands::timeline::split_clip,
+            commands::timeline::delete_clips,
+            commands::timeline::set_clip_speed,
+            commands::timeline::add_track,
+            commands::timeline::remove_track,
+            commands::timeline::set_track_flags,
+            // 字幕：本地离线识别 / 字幕轨 / 文字编辑
+            commands::subtitle::asr_status,
+            commands::subtitle::generate_subtitles,
+            commands::subtitle::apply_subtitles,
+            commands::subtitle::add_subtitle_clip,
+            commands::subtitle::set_clip_text,
+            // 空间识别：COLMAP sidecar 解算 / 取消 / 能力探测
+            commands::reconstruct::colmap_status,
+            commands::reconstruct::start_reconstruct,
+            commands::reconstruct::cancel_reconstruct,
+            // 图
+            commands::graph::add_node,
+            commands::graph::remove_node,
+            commands::graph::connect,
+            commands::graph::disconnect,
+            commands::graph::set_node_param,
+            commands::graph::collapse_compound,
+            commands::graph::enter_compound,
+            commands::graph::get_node_catalog,
+            commands::graph::evaluate_graph,
+            // 关键帧
+            commands::keyframe::set_keyframe,
+            commands::keyframe::remove_keyframe,
+            commands::keyframe::move_keyframe,
+            commands::keyframe::set_curve_tangent,
+            commands::keyframe::set_easing_preset,
+            commands::keyframe::evaluate_param,
+            // 渲染
+            commands::render::request_frame,
+            commands::render::start_preview,
+            commands::render::stop_preview,
+            commands::render::set_preview_quality,
+            commands::render::invalidate_node,
+            commands::render::get_cache_stats,
+            commands::render::clear_cache,
+            // 导出
+            commands::export::start_export,
+            commands::export::cancel_export,
+            commands::export::pause_export,
+            commands::export::resume_export,
+            commands::export::list_export_presets,
+            commands::export::export_capabilities,
+            // 历史与设置
+            commands::history::undo,
+            commands::history::redo,
+            commands::history::get_history,
+            commands::history::jump_history,
+            commands::settings::get_settings,
+            commands::settings::set_settings,
+        ])
+        .run(tauri::generate_context!())
+        .expect("Reelix 启动失败：Tauri 运行时未能初始化");
+}

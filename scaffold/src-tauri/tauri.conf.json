@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Reelix",
+  "version": "0.1.0",
+  "identifier": "com.xiaofangstudio.reelix",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1422",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Reelix",
+        "width": 1600,
+        "height": 950,
+        "minWidth": 1180,
+        "minHeight": 720,
+        "resizable": true,
+        "center": true,
+        "decorations": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi"],
+    "publisher": "小方工作室",
+    "icon": ["icons/icon.ico"],
+    "copyright": "© 2026 小方工作室",
+    "category": "Video",
+    "shortDescription": "特效合成软件，剪辑是它的附属能力",
+    "longDescription": "Reelix 是一款桌面特效合成软件。以图层 + 效果栈表达特效，识别扫描 3D 空间场景（相机解算、三维文字与三维平面贴合）是核心地基；多轨时间线与图层树、效果栈处于同一份数据模型，互为两种看法。图层合成、三维摄像机、关键帧动画、剪辑，全在同一个软件里。",
+    "resources": {
+      "ffmpeg/*": "ffmpeg/",
+      "assets/fonts/**/*": "assets/fonts/",
+      "assets/presets/**/*": "assets/presets/",
+      "../../LICENSE": "LICENSE",
+      "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+    },
+    "windows": {
+      "wix": {
+        "language": ["zh-CN"]
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese"]
+      }
+    }
+  }
+}

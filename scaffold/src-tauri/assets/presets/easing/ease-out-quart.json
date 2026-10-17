@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-out-quart",
+  "name": "四次缓出",
+  "nameEn": "ease-out-quart",
+  "category": "quart",
+  "categoryLabel": "四次",
+  "bezier": [
+    0.25,
+    1,
+    0.5,
+    1
+  ],
+  "builtin": false,
+  "note": "四次方减速"
+}

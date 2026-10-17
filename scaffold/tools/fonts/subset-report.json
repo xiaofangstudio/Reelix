@@ -1,0 +1,92 @@
+{
+  "charsetChars": 7551,
+  "totalTtfBytes": 7997492,
+  "totalWoff2Bytes": 3540264,
+  "entries": [
+    {
+      "output": "Inter-Light",
+      "ttf": 98980,
+      "woff2": 34156,
+      "dir": "Inter",
+      "family": "Inter",
+      "rfn": false,
+      "name_ok": true
+    },
+    {
+      "output": "Inter-Regular",
+      "ttf": 98856,
+      "woff2": 33740,
+      "dir": "Inter",
+      "family": "Inter",
+      "rfn": false,
+      "name_ok": true
+    },
+    {
+      "output": "Inter-Bold",
+      "ttf": 99124,
+      "woff2": 34736,
+      "dir": "Inter",
+      "family": "Inter",
+      "rfn": false,
+      "name_ok": true
+    },
+    {
+      "output": "JetBrainsMono-Light",
+      "ttf": 117356,
+      "woff2": 42384,
+      "dir": "JetBrainsMono",
+      "family": "JetBrains Mono",
+      "rfn": false,
+      "name_ok": true
+    },
+    {
+      "output": "JetBrainsMono-Regular",
+      "ttf": 116488,
+      "woff2": 41628,
+      "dir": "JetBrainsMono",
+      "family": "JetBrains Mono",
+      "rfn": false,
+      "name_ok": true
+    },
+    {
+      "output": "JetBrainsMono-Bold",
+      "ttf": 119332,
+      "woff2": 42884,
+      "dir": "JetBrainsMono",
+      "family": "JetBrains Mono",
+      "rfn": false,
+      "name_ok": true
+    },
+    {
+      "output": "ReelixSerifSC-Regular",
+      "ttf": 3679492,
+      "woff2": 1640904,
+      "dir": "LXGWWenKai",
+      "family": "Reelix Serif SC",
+      "rfn": true,
+      "name_ok": true
+    },
+    {
+      "output": "ReelixSerifSC-Medium",
+      "ttf": 3667864,
+      "woff2": 1669832,
+      "dir": "LXGWWenKai",
+      "family": "Reelix Serif SC",
+      "rfn": true,
+      "name_ok": true
+    }
+  ],
+  "missing": [
+    "LXGWNeoXiHei / ReelixHeiSC-Regular <- reference/fonts/LxgwNeoXiHei/LXGWNeoXiHei.ttf",
+    "SmileySans / ReelixDisplaySC-Regular <- reference/fonts/smiley-sans/build/SmileySans-Oblique.ttf",
+    "NotoSansSC / NotoSansSC-Regular <- reference/fonts/NotoSansSC/NotoSansSC-Regular.otf",
+    "NotoSansSC / NotoSansSC-Bold <- reference/fonts/NotoSansSC/NotoSansSC-Bold.otf",
+    "NotoSerifSC / NotoSerifSC-Regular <- reference/fonts/NotoSerifSC/NotoSerifSC-Regular.otf",
+    "NotoSerifSC / NotoSerifSC-Bold <- reference/fonts/NotoSerifSC/NotoSerifSC-Bold.otf",
+    "ZhuqueFangsong / ReelixFangsongSC-Regular <- reference/fonts/ZhuqueFangsong/ZhuqueFangsong-Regular.ttf",
+    "Montserrat / Montserrat-Regular <- reference/fonts/Montserrat/Montserrat-Regular.ttf",
+    "Montserrat / Montserrat-Bold <- reference/fonts/Montserrat/Montserrat-Bold.ttf",
+    "Poppins / Poppins-Regular <- reference/fonts/Poppins/Poppins-Regular.ttf",
+    "Poppins / Poppins-Bold <- reference/fonts/Poppins/Poppins-Bold.ttf"
+  ]
+}

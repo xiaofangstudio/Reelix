@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-in-quint",
+  "name": "五次缓入",
+  "nameEn": "ease-in-quint",
+  "category": "quint",
+  "categoryLabel": "五次",
+  "bezier": [
+    0.64,
+    0,
+    0.78,
+    0
+  ],
+  "builtin": false,
+  "note": "五次方加速，重"
+}

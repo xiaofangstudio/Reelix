@@ -1,0 +1,11 @@
+【占位文件 —— 这不是许可证正文】
+
+字体：霞鹜新晰黑（LXGW Neo XiHei）
+上游仓库：https://github.com/lxgw/LxgwNeoXiHei
+许可证：SIL Open Font License 1.1
+Reserved Font Name：有 —— 子集化后必须改内部字体名，界面以「基于 霞鹜新晰黑」标注来源
+
+【补法】从上面的仓库里找到 OFL 许可原文（通常名为 `OFL.txt` 或 `LICENSE`），
+逐字复制过来覆盖本文件的全部内容。不要改写、不要节选、不要自己重写。
+
+【红线】未补齐前，本字体不得随安装包发布。依据：docs/09-3D摄像机与素材库.md 第 3.1 节与第七节。

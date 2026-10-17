@@ -1,0 +1,49 @@
+[package]
+name = "reelix"
+version = "0.1.0"
+description = "特效合成软件（合成优先，剪辑内建）"
+authors = ["小方工作室"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.75"
+
+# Reelix 只做 Windows 桌面（docs/06 第三节），不面向 iOS / Android，
+# 因此不需要 staticlib / cdylib 这两种为移动端准备的构型。
+# 它们会在 target/release 下留下 160MB+ 的 .lib 与 70MB+ 的 .rlib，
+# 而且 cdylib 产出的 reelix_lib.dll 会被 Tauri 打包器当成附带 DLL 塞进 MSI。
+# 只保留 rlib：main.rs 链接它足够，单元测试也够用。
+[lib]
+name = "reelix_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# tauri 只在桌面外壳里需要，所以设为可选。
+# 原因：reelix-mcp 复用本库的纯逻辑（工程读写 / 时间线 / 效果图 / 关键帧 / 合成），
+# 但它是个普通命令行进程——若把 tauri 拖进来，会连带 webview2-com-sys 的 C++
+# 符号，在没有 Tauri 链接参数的目标里链接失败（LNK1120 一堆未解析外部符号）。
+# 桌面主程序用默认 feature `desktop`；MCP 用 `default-features = false`。
+tauri = { version = "2", features = [], optional = true }
+# 保存项目时要弹系统保存框；只在用户主动保存/导入导出时用，无任何网络行为
+tauri-plugin-dialog = { version = "2", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# 桌面外壳：默认开。关掉它得到的是「只有纯逻辑、不含 tauri」的库。
+default = ["desktop"]
+desktop = ["dep:tauri", "dep:tauri-plugin-dialog"]
+# 发布版打自定义协议用
+custom-protocol = ["desktop", "tauri/custom-protocol"]
+
+[profile.release]
+# 安装包体积红线 150MB，目标 60MB 以内（docs/07 第二节、docs/11 第一节）。
+# 这几项是体积控制的「中收益」手段，逐项对齐 docs/07。
+opt-level = "z"         # 优先体积，比 "s" 更极致
+lto = true              # 链接时优化，跨 crate 内联并丢弃死代码
+codegen-units = 1       # 最大化优化，牺牲编译速度换体积
+panic = "abort"         # 去掉 unwinding 表
+strip = true            # 剥离符号
+incremental = false     # 关闭增量，避免保留多余的编译产物段

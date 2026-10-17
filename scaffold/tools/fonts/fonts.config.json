@@ -1,0 +1,119 @@
+{
+  "_note": "内容层字体子集化配置。所有路径相对仓库根目录。规格见 docs/09 第 3.5 / 3.6 节。",
+  "charsetFile": "scaffold/tools/fonts/charset/content.txt",
+  "outputRoot": "scaffold/src-tauri/assets/fonts",
+  "subsetOptions": {
+    "layoutFeatures": ["*"],
+    "glyphNames": true,
+    "symbolCmap": true,
+    "legacyCmap": true,
+    "notdefOutline": true,
+    "recalcBounds": true,
+    "recalcTimestamp": false
+  },
+  "fonts": [
+    {
+      "dir": "Inter",
+      "family": "Inter",
+      "rfn": false,
+      "note": "无 RFN，保留原名。上游只提供可变字体，按字重实例化后子集。",
+      "weights": [
+        { "source": "reference/fonts/inter/docs/font-files/InterVariable.ttf", "instance": { "wght": 300 }, "output": "Inter-Light" },
+        { "source": "reference/fonts/inter/docs/font-files/InterVariable.ttf", "instance": { "wght": 400 }, "output": "Inter-Regular" },
+        { "source": "reference/fonts/inter/docs/font-files/InterVariable.ttf", "instance": { "wght": 700 }, "output": "Inter-Bold" }
+      ]
+    },
+    {
+      "dir": "JetBrainsMono",
+      "family": "JetBrains Mono",
+      "rfn": false,
+      "note": "无 RFN，保留原名。",
+      "weights": [
+        { "source": "reference/fonts/JetBrainsMono/fonts/ttf/JetBrainsMono-Light.ttf", "output": "JetBrainsMono-Light" },
+        { "source": "reference/fonts/JetBrainsMono/fonts/ttf/JetBrainsMono-Regular.ttf", "output": "JetBrainsMono-Regular" },
+        { "source": "reference/fonts/JetBrainsMono/fonts/ttf/JetBrainsMono-Bold.ttf", "output": "JetBrainsMono-Bold" }
+      ]
+    },
+    {
+      "dir": "LXGWWenKai",
+      "family": "Reelix Serif SC",
+      "originalFamily": "霞鹜文楷",
+      "rfn": true,
+      "note": "有 RFN（霞鹜/落霞孤鹜/LXGW）。子集属修改版，必须改内部字体名。上游本副本只提供 Light/Regular/Medium，无 Bold，故第二字重取 Medium（规格允许中文 1–2 字重）。",
+      "weights": [
+        { "source": "reference/fonts/LxgwWenKai/fonts/TTF/LXGWWenKai-Regular.ttf", "output": "ReelixSerifSC-Regular" },
+        { "source": "reference/fonts/LxgwWenKai/fonts/TTF/LXGWWenKai-Medium.ttf", "output": "ReelixSerifSC-Medium" }
+      ]
+    },
+    {
+      "dir": "LXGWNeoXiHei",
+      "family": "Reelix Hei SC",
+      "originalFamily": "霞鹜新晰黑",
+      "rfn": true,
+      "note": "有 RFN。源字体需从 lxgw/LxgwNeoXiHei 上游 release 下载。",
+      "weights": [
+        { "source": "reference/fonts/LxgwNeoXiHei/LXGWNeoXiHei.ttf", "output": "ReelixHeiSC-Regular" }
+      ]
+    },
+    {
+      "dir": "SmileySans",
+      "family": "Reelix Display SC",
+      "originalFamily": "得意黑",
+      "rfn": true,
+      "note": "有 RFN（Smiley/得意黑）。上游只给源码，需 fontmake 构建出 TTF 后放到 source 路径。",
+      "weights": [
+        { "source": "reference/fonts/smiley-sans/build/SmileySans-Oblique.ttf", "output": "ReelixDisplaySC-Regular" }
+      ]
+    },
+    {
+      "dir": "NotoSansSC",
+      "family": "Noto Sans SC",
+      "rfn": false,
+      "note": "无 RFN。源字体需从 notofonts/noto-cjk 上游下载。",
+      "weights": [
+        { "source": "reference/fonts/NotoSansSC/NotoSansSC-Regular.otf", "output": "NotoSansSC-Regular" },
+        { "source": "reference/fonts/NotoSansSC/NotoSansSC-Bold.otf", "output": "NotoSansSC-Bold" }
+      ]
+    },
+    {
+      "dir": "NotoSerifSC",
+      "family": "Noto Serif SC",
+      "rfn": false,
+      "note": "无 RFN。源字体需从 notofonts/noto-cjk 上游下载。",
+      "weights": [
+        { "source": "reference/fonts/NotoSerifSC/NotoSerifSC-Regular.otf", "output": "NotoSerifSC-Regular" },
+        { "source": "reference/fonts/NotoSerifSC/NotoSerifSC-Bold.otf", "output": "NotoSerifSC-Bold" }
+      ]
+    },
+    {
+      "dir": "ZhuqueFangsong",
+      "family": "Reelix Fangsong SC",
+      "originalFamily": "朱雀仿宋",
+      "rfn": true,
+      "note": "有 RFN。源字体需从 TrionesType/zhuque 上游 release 下载。",
+      "weights": [
+        { "source": "reference/fonts/ZhuqueFangsong/ZhuqueFangsong-Regular.ttf", "output": "ReelixFangsongSC-Regular" }
+      ]
+    },
+    {
+      "dir": "Montserrat",
+      "family": "Montserrat",
+      "rfn": false,
+      "note": "无 RFN。源字体需从 Google Fonts 上游下载。",
+      "weights": [
+        { "source": "reference/fonts/Montserrat/Montserrat-Regular.ttf", "output": "Montserrat-Regular" },
+        { "source": "reference/fonts/Montserrat/Montserrat-Bold.ttf", "output": "Montserrat-Bold" }
+      ]
+    },
+    {
+      "dir": "Poppins",
+      "family": "Poppins",
+      "rfn": false,
+      "note": "无 RFN。源字体需从 Google Fonts 上游下载。",
+      "weights": [
+        { "source": "reference/fonts/Poppins/Poppins-Regular.ttf", "output": "Poppins-Regular" },
+        { "source": "reference/fonts/Poppins/Poppins-Bold.ttf", "output": "Poppins-Bold" }
+      ]
+    }
+  ]
+}

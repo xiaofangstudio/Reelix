@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-out-circ",
+  "name": "圆弧缓出",
+  "nameEn": "ease-out-circ",
+  "category": "circ",
+  "categoryLabel": "圆弧",
+  "bezier": [
+    0,
+    0.55,
+    0.45,
+    1
+  ],
+  "builtin": false,
+  "note": "圆函数缓出"
+}

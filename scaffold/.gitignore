@@ -1,0 +1,36 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# FFmpeg 动态库，不入库
+src-tauri/ffmpeg/
+
+# 打包产物
+*.msi
+*.exe
+bundle/
+
+# 编辑器
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# 系统
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+yarn-error.log*

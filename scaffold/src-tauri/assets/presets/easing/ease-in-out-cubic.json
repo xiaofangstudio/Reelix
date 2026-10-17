@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-in-out-cubic",
+  "name": "三次缓入缓出",
+  "nameEn": "ease-in-out-cubic",
+  "category": "cubic",
+  "categoryLabel": "三次",
+  "bezier": [
+    0.65,
+    0,
+    0.35,
+    1
+  ],
+  "builtin": false,
+  "note": "立方对称缓动"
+}
