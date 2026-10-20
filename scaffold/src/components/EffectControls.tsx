@@ -4,9 +4,9 @@
  * 结构照两端蒸馏出来的要点：
  * - 顶部是图层头：这一栏属于哪个图层、挂了几个效果（AE 效果控件顶部就是图层名）；
  * - 中部是效果卡片栈，从上到下依次叠加，参数行右侧带 ◀ ◆ ▶ 关键帧导航器
- *   （FilmCraft `key_navigator`：菱形在播放头处增删关键帧，播放头正落在关键帧上时实心；
+ *   （FC 参考 `key_navigator`：菱形在播放头处增删关键帧，播放头正落在关键帧上时实心；
  *    两侧箭头跳上一个 / 下一个关键帧）；
- * - 底部是选中效果的关键帧泳道，带时间标尺（FilmCraft `paint_ruler` 的做法），
+ * - 底部是选中效果的关键帧泳道，带时间标尺（FC 参考 `paint_ruler` 的做法），
  *   点菱形跳到该关键帧，点空白把播放头挪过去。
  *
  * 与曲线编辑器的关系：曲线编辑器仍是剪辑页时间线的二级页签，这里只管
@@ -19,7 +19,7 @@ import { EffectStack, DragNumber } from "./EffectStack";
 import { msToTimecode, msToShort } from "../core/timecode";
 
 /** 时间基准：序列时间（与播放头一致）/ 源素材时间（片段内部从 0 起）。
- *  蒸馏自 EffectCraft 效果面板的 Source / Sequence 双基准；PR 的效果控件
+ *  蒸馏自 EC 参考 效果面板的 Source / Sequence 双基准；PR 的效果控件
  *  在嵌套序列片段上也有同样的切换。 */
 type TimeBase = "sequence" | "source";
 
@@ -114,7 +114,7 @@ export function EffectControls() {
 
       <div className="panel-body">
         {/* 图层自身的 3D 变换组（AE 效果控件的经典结构：Transform 组在最上，
-            之后才是效果栈；EffectCraft 同构）。对照 docs/09 第 2.3 节的参数表 */}
+            之后才是效果栈；EC 参考 同构）。对照 docs/09 第 2.3 节的参数表 */}
         {clip && <Layer3DGroup />}
         <EffectStack />
         {!clip && (

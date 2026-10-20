@@ -18,6 +18,8 @@ export interface Project {
   assets: Asset[];
   sequences: Sequence[];
   graphs: Record<Id, Graph>;
+  /** 素材箱文件夹。后端 serde default，旧工程读不到时按 [] 容错 */
+  bins?: Array<{ id: Id; name: string }>;
 }
 
 export interface Asset {
@@ -32,6 +34,8 @@ export interface Asset {
   codec: string;
   hasAudio: boolean;
   missing: boolean;
+  /** 所属文件夹 id；null 或缺省 = 未归类（「全部」） */
+  binId?: Id | null;
 }
 
 export interface Sequence {
@@ -44,6 +48,8 @@ export interface Sequence {
   durationMs: number;
   tracks: Track[];
   rootGraphId: Id;
+  /** 时间线标记。后端 serde default，旧工程读不到时按 [] 容错 */
+  markers?: Array<{ id: Id; timeMs: number; name: string | null }>;
 }
 
 export interface Track {
@@ -155,7 +161,19 @@ export interface Clip {
   transform3D?: Transform3D;
   /** 字幕轨片段的文字内容；普通视频/音频片段为空 */
   text?: string;
+  /** 右键「启用」勾选状态；禁用的片段不参与预览与导出 */
+  enabled?: boolean;
+  /** 右键「标签」颜色名（PR 式标签色，界面用高饱和渲染） */
+  label?: string;
+  /** 入场转场：与前一片段衔接处的叠化，见 Rust `Transition` */
+  transitionIn?: { kind: TransitionKind; durationMs: number } | null;
+  /** 音频淡入 / 淡出时长（毫秒），仅音频片段使用 */
+  audioFadeInMs?: number | null;
+  audioFadeOutMs?: number | null;
 }
+
+/** 转场类型：由 Rust 合成器实现 */
+export type TransitionKind = "crossDissolve" | "dipToBlack" | "dipToWhite";
 
 // 从 ./graph 再导出，方便只引 project 的地方也能拿到图类型
 export * from "./graph";

@@ -54,6 +54,23 @@ export function setClipSpeed(clipId: Id, speed: number): Promise<boolean> {
   return invoke<boolean>("set_clip_speed", { clipId, speed });
 }
 
+/** 片段开关：启用/禁用、标签色（label 传空串=清除标签） */
+export function setClipFlags(
+  clipId: Id,
+  flags: { enabled?: boolean; label?: string }
+): Promise<boolean> {
+  return invoke<boolean>("set_clip_flags", {
+    clipId,
+    enabled: flags.enabled ?? null,
+    label: flags.label ?? null,
+  });
+}
+
+/** 取消视音频链接：清除该片段所在链接组（compound_id） */
+export function unlinkCompound(clipId: Id): Promise<boolean> {
+  return invoke<boolean>("unlink_compound", { clipId });
+}
+
 /** 加一条轨道（视频 / 音频 / 摄像机 / 字幕），默认加到当前序列 */
 export function addTrack(kind: Track["kind"], sequenceId?: Id): Promise<Track> {
   return invoke<Track>("add_track", { kind, sequenceId: sequenceId ?? null });
@@ -76,4 +93,61 @@ export function setTrackFlags(
     locked: flags.locked ?? null,
     solo: flags.solo ?? null,
   });
+}
+
+/** 在指定时刻加一个时间线标记，返回新标记 */
+export function addMarker(
+  sequenceId: Id,
+  timeMs: number,
+  name: string | null
+): Promise<{ id: string; timeMs: number; name: string | null }> {
+  return invoke("add_marker", { sequenceId, timeMs, name: name ?? null });
+}
+
+/** 删除一个时间线标记 */
+export function removeMarker(sequenceId: Id, markerId: Id): Promise<boolean> {
+  return invoke("remove_marker", { sequenceId, markerId });
+}
+
+/** 移动标记到新的时刻 */
+export function moveMarker(sequenceId: Id, markerId: Id, timeMs: number): Promise<boolean> {
+  return invoke("move_marker", { sequenceId, markerId, timeMs });
+}
+
+/** 新建素材箱文件夹，返回新文件夹 */
+export function createBin(name: string): Promise<{ id: string; name: string }> {
+  return invoke("create_bin", { name });
+}
+
+/** 重命名素材箱文件夹 */
+export function renameBin(binId: Id, name: string): Promise<boolean> {
+  return invoke("rename_bin", { binId, name });
+}
+
+/** 删除素材箱文件夹（里面的素材回到「全部」） */
+export function removeBin(binId: Id): Promise<boolean> {
+  return invoke("remove_bin", { binId });
+}
+
+/** 把素材归入文件夹；binId 传 null 表示移出（回到「全部」） */
+export function setAssetBin(assetId: Id, binId: Id | null): Promise<boolean> {
+  return invoke("set_asset_bin", { assetId, binId });
+}
+
+/** 设置片段入场转场；kind 传 null 清除 */
+export function setTransition(
+  clipId: Id,
+  kind: "crossDissolve" | "dipToBlack" | "dipToWhite" | null,
+  durationMs = 500
+): Promise<boolean> {
+  return invoke<boolean>("set_transition", { clipId, kind, durationMs });
+}
+
+/** 设置音频片段淡入淡出（毫秒，0 表示取消） */
+export function setAudioFade(
+  clipId: Id,
+  fadeInMs: number,
+  fadeOutMs: number
+): Promise<boolean> {
+  return invoke<boolean>("set_audio_fade", { clipId, fadeInMs, fadeOutMs });
 }

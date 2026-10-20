@@ -22,6 +22,7 @@ export type EffectCategory =
   | "蒙版"
   | "粒子"
   | "合成"
+  | "GPU"
   | "输出";
 
 /**
@@ -52,6 +53,8 @@ export type EffectType =
   // 抠像（色度抠图，用户点名要）
   | "keyer"
   // 滤镜
+  | "gpuGrade"
+  | "gpuLut"
   | "blur"
   | "sharpen"
   | "glow"

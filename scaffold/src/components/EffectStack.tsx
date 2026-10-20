@@ -13,6 +13,7 @@ import { useAppStore, useSelectedClip } from "../store/appStore";
 import type { Effect, EffectKeyframe, EffectParam, EffectParamValue } from "../types/effect";
 import type { Id } from "../types/project";
 import type { Keyframe } from "../types/keyframe";
+import { IconKeyframe } from "./icons";
 import { evaluateCurve } from "../core/curveEval";
 import { effectsByCategory } from "../core/effectCatalog";
 
@@ -64,7 +65,7 @@ export function EffectStack() {
   const dragFrom = useRef<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // 效果预设：右键卡片保存 / 应用 / 清除（EffectCraft 的 effect preset 做法）
+  // 效果预设：右键卡片保存 / 应用 / 清除（EC 参考 的 effect preset 做法）
   const [presets, setPresets] = useState<Record<string, ParamPreset>>(loadPresets);
   const [ctx, setCtx] = useState<{ x: number; y: number; effect: Effect } | null>(null);
 
@@ -194,7 +195,7 @@ export function EffectStack() {
               onClick={(e) => {
                 e.stopPropagation();
                 // Alt / Cmd 点折叠箭头：联动这个图层所有效果一起折叠或展开
-                // （AE 的联动折叠，蒸馏自 EffectCraft 的 toggle_closed(..., all)）
+                // （AE 的联动折叠，蒸馏自 EC 参考 的 toggle_closed(..., all)）
                 if (e.altKey || e.metaKey) {
                   setAllEffectsCollapsed(clip.id, !fx.collapsed);
                   return;
@@ -205,7 +206,7 @@ export function EffectStack() {
               {fx.collapsed ? "▸" : "▾"}
             </button>
             {/* fx 标记：PR 效果控件里效果名前的 fx 徽标，点它开关效果；
-                旁路时打一道斜线（FilmCraft 的画法） */}
+                旁路时打一道斜线（FC 参考 的画法） */}
             <button
               type="button"
               className={`fx-fxmark${fx.bypassed ? " off" : ""}`}
@@ -452,11 +453,17 @@ function FxParamRow({
     <div className={`fx-row${isBounded ? " has-slider" : ""}`}>
       <button
         type="button"
-        className={`fx-stopwatch${animated ? " on" : ""}`}
-        title={animated ? "关闭该参数的关键帧" : "启用关键帧（在播放头处记录）"}
+        className={`fx-stopwatch${animated ? " on" : ""}${atPlayhead ? " at-playhead" : ""}`}
+        title={
+          animated
+            ? atPlayhead
+              ? "播放头处有关键帧：再点一次删除它"
+              : "该参数已启用关键帧：点一下在播放头处记录"
+            : "启用关键帧（在播放头处记录）"
+        }
         onClick={onToggleAnim}
       >
-        ⏱
+        <IconKeyframe />
       </button>
       <span className="fx-label" title={param.label}>
         {param.label}
@@ -529,7 +536,7 @@ function FxParamRow({
 
 /**
  * 角度盘：指针绕圆心拖动改角度，双击归零。
- * 蒸馏自 EffectCraft 角度控件的拖动手感，但换成 Reelix 的描边圆盘。
+ * 蒸馏自 EC 参考 角度控件的拖动手感，但换成 Reelix 的描边圆盘。
  */
 function AngleDial({
   value,

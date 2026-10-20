@@ -16,6 +16,7 @@ import type { Layer3DOrientation } from "../types/project";
 import {
   addSubtitleAtPlayhead,
   generateSubtitlesForClip,
+  setClipTransition,
   updateClipText,
 } from "../store/projectActions";
 import { EffectStack } from "./EffectStack";
@@ -121,6 +122,80 @@ export function PropertiesPanel() {
               </div>
             ) : null}
 
+            {/* 转场：改类型、调时长、应用到全部（用户要的剪映式转场属性） */}
+            {clip && (
+              <div className="prop-group">
+                <div className="group-title">转场</div>
+                <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
+                  <span className="label">类型</span>
+                  <select
+                    className="value num"
+                    value={clip.transitionIn?.kind ?? "none"}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      void setClipTransition(
+                        clip.id,
+                        v === "none"
+                          ? null
+                          : (v as "crossDissolve" | "dipToBlack" | "dipToWhite"),
+                        clip.transitionIn?.durationMs ?? 500
+                      );
+                    }}
+                  >
+                    <option value="none">无</option>
+                    <option value="crossDissolve">交叉溶解</option>
+                    <option value="dipToBlack">闪黑</option>
+                    <option value="dipToWhite">闪白</option>
+                  </select>
+                </div>
+                {clip.transitionIn && (
+                  <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
+                    <span className="label">时长（ms）</span>
+                    <input
+                      className="value num"
+                      type="number"
+                      min={1}
+                      max={Math.max(1, Math.round(clip.durationMs))}
+                      step={50}
+                      value={clip.transitionIn.durationMs}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (!Number.isNaN(v)) {
+                          void setClipTransition(
+                            clip.id,
+                            clip.transitionIn!.kind,
+                            Math.max(1, Math.min(clip.durationMs, v))
+                          );
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="curve-btn subtitle-add"
+                  disabled={!clip.transitionIn}
+                  title="把当前转场（类型+时长）套到时间线上全部片段"
+                  onClick={() => {
+                    const st = useAppStore.getState();
+                    const seq = st.project?.sequences[0];
+                    if (!seq || !clip.transitionIn) return;
+                    let n = 0;
+                    for (const track of seq.tracks) {
+                      for (const c of track.clips) {
+                        if (c.id === clip.id) continue;
+                        void setClipTransition(c.id, clip.transitionIn.kind, clip.transitionIn.durationMs);
+                        n += 1;
+                      }
+                    }
+                    st.pushNotice("info", `转场已应用到 ${n} 个片段`);
+                  }}
+                >
+                  应用到全部片段
+                </button>
+              </div>
+            )}
+
             {/* 图层 3D：仅视频/图片等图层片段可勾选，摄像机片段不显示（docs/09 第 2.3 节） */}
             {isLayerClip && (
               <div className="prop-group">
@@ -146,6 +221,8 @@ export function PropertiesPanel() {
                       onChange={(patch) =>
                         setClipTransform3D(clip.id, { position: patch })
                       }
+                      paramKey="position"
+                      clipId={clip.id}
                     />
                     <Vec3Row
                       label="旋转"
@@ -153,7 +230,59 @@ export function PropertiesPanel() {
                       onChange={(patch) =>
                         setClipTransform3D(clip.id, { rotation: patch })
                       }
+                      paramKey="rotation"
+                      clipId={clip.id}
                     />
+
+                    {/* 圈数：rotationZ / 360 自动计数（1X = 转满一圈），也可手填圈数。
+                        旁边显示当前角度；改圈数 = 角度整体加/减整圈。 */}
+                    <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
+                      <span className="label">圈数</span>
+                      <div className="vec3">
+                        <span className="vec3-cell">
+                          <span className="axis">圈</span>
+                          <input
+                            className="value num"
+                            type="number"
+                            step={1}
+                            title="转了几整圈：1X = 一圈，-1X = 反向一圈；角度会跟着自动换算"
+                            value={Math.round((transform.rotation.z / 360) * 100) / 100}
+                            onChange={(e) => {
+                              const turns = Number(e.target.value);
+                              if (!Number.isNaN(turns)) {
+                                setClipTransform3D(clip.id, {
+                                  rotation: { z: turns * 360 },
+                                });
+                              }
+                            }}
+                          />
+                        </span>
+                        <span className="vec3-cell">
+                          <span className="axis">角</span>
+                          <input
+                            className="value num"
+                            type="number"
+                            step={5}
+                            title="旋转角度（Z 轴，度）"
+                            value={Math.round(transform.rotation.z * 100) / 100}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              if (!Number.isNaN(v)) {
+                                setClipTransform3D(clip.id, { rotation: { z: v } });
+                              }
+                            }}
+                          />
+                        </span>
+                        <span className="vec3-cell turns-readout" title="自动计数的圈数显示">
+                          {(() => {
+                            const t = transform.rotation.z / 360;
+                            const whole = Math.trunc(t);
+                            if (Math.abs(t) >= 1) return `${Math.abs(whole)}X${whole < 0 ? " 反向" : ""}`;
+                            return "0X";
+                          })()}
+                        </span>
+                      </div>
+                    </div>
 
                     <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
                       <span className="label">缩放</span>
@@ -251,6 +380,29 @@ function SubtitleTextEditor({ clipId, text }: { clipId: string; text: string }) 
       >
         应用文字
       </button>
+      {/* 应用到全部：把这条字幕的文字样式套到工程里所有字幕（用户要求） */}
+      <button
+        type="button"
+        className="curve-btn subtitle-add"
+        title="把当前字幕的文字与样式应用到全部字幕"
+        onClick={() => {
+          const s = useAppStore.getState();
+          const seq = s.project?.sequences[0];
+          if (!seq) return;
+          let count = 0;
+          for (const track of seq.tracks) {
+            if (track.kind !== "subtitle") continue;
+            for (const c of track.clips) {
+              if (c.id === clipId) continue;
+              void updateClipText(c.id, draft);
+              count += 1;
+            }
+          }
+          s.pushNotice("info", `已应用到 ${count} 条字幕`);
+        }}
+      >
+        应用到全部字幕
+      </button>
     </>
   );
 }
@@ -267,14 +419,98 @@ function TextRow({ label, text }: { label: string; text: string }) {
 }
 
 /** 三分量（X/Y/Z）数值行，位置与旋转共用。 */
+/** 可拖拽的数值格：按住左右拖改值（AE 的 XYZ 拖拽习惯），双击可键盘输入 */
+function DragNum({
+  axis,
+  value,
+  onChange,
+}: {
+  axis: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => {
+    if (!editing) setDraft(String(Math.round(value * 100) / 100));
+  }, [value, editing]);
+
+  /** 滚轮调值：向上加、向下减（Shift 细调 / Ctrl 粗调），用户要求 */
+  const onWheel = (e: React.WheelEvent) => {
+    if (editing) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const step = e.shiftKey ? 0.1 : e.ctrlKey ? 10 : 1;
+    onChange(Math.round((value + (e.deltaY < 0 ? step : -step)) * 100) / 100);
+  };
+
+  const startDrag = (e: React.PointerEvent) => {
+    if (editing) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const base = value;
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      // 每像素 1 单位，Shift 细调（0.1），Ctrl 粗调（10）
+      const step = ev.shiftKey ? 0.1 : ev.ctrlKey ? 10 : 1;
+      onChange(Math.round((base + dx * step) * 100) / 100);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  if (editing) {
+    return (
+      <input
+        className="value num"
+        type="number"
+        step={0.1}
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          setEditing(false);
+          const v = Number(draft);
+          if (!Number.isNaN(v)) onChange(v);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") setEditing(false);
+        }}
+      />
+    );
+  }
+
+  return (
+    <input
+      className="value num draggable-num"
+      type="text"
+      value={Math.round(value * 100) / 100}
+      title={`${axis}：按住左右拖改值（Shift 细调 / Ctrl 粗调），双击键盘输入`}
+      onPointerDown={startDrag}
+      onWheel={onWheel}
+      onDoubleClick={() => setEditing(true)}
+      readOnly
+    />
+  );
+}
+
 function Vec3Row({
   label,
   value,
   onChange,
+  paramKey,
+  clipId,
 }: {
   label: string;
   value: { x: number; y: number; z: number };
   onChange: (patch: Partial<{ x: number; y: number; z: number }>) => void;
+  paramKey?: string;
+  clipId?: string;
 }) {
   return (
     <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
@@ -283,18 +519,35 @@ function Vec3Row({
         {(["x", "y", "z"] as const).map((axis) => (
           <label key={axis} className="vec3-cell">
             <span className="axis">{axis.toUpperCase()}</span>
-            <input
-              className="value num"
-              type="number"
-              step={1}
-              value={value[axis]}
-              onChange={(e) => onChange({ [axis]: Number(e.target.value) })}
-            />
+            <span className="vec3-kf">
+              <DragNum
+                axis={axis.toUpperCase()}
+                value={value[axis]}
+                onChange={(v) => onChange({ [axis]: v })}
+              />
+              {paramKey && clipId && (
+                <button
+                  type="button"
+                  className="fx-tl-kf"
+                  title={"给「" + label + " " + axis.toUpperCase() + "」在播放头处打关键帧"}
+                  onClick={() => kf(clipId, paramKey + axis.toUpperCase(), value[axis])}
+                >
+                  ◇
+                </button>
+              )}
+            </span>
           </label>
         ))}
       </div>
     </div>
   );
+}
+
+/** 在播放头处给某个参数打关键帧（属性面板的 ◇ 按钮共用） */
+function kf(clipId: string, param: string, value: number) {
+  const s = useAppStore.getState();
+  s.upsertEffectKeyframe(clipId, param, s.playheadMs, value);
+  s.pushNotice("info", "已打关键帧");
 }
 
 /** 两分量（X/Y）数值行，锚点用，归一化 0~1。 */

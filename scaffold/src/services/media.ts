@@ -7,6 +7,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { Asset } from "../types/project";
+import type { Id } from "../types/project";
 
 /** 只探测不导入时返回的素材信息 */
 export interface MediaInfo {
@@ -48,4 +49,9 @@ export function removeMedia(assetId: string, deleteFile = false): Promise<boolea
  */
 export function generateThumbnail(assetId: string, timeMs: number): Promise<ArrayBuffer> {
   return invoke<ArrayBuffer>("generate_thumbnail", { assetId, timeMs });
+}
+
+/** 生成代理媒体（1/4 画幅 + 低码率），返回代理文件路径 */
+export function makeProxy(assetId: Id): Promise<string> {
+  return invoke<string>("make_proxy", { assetId });
 }

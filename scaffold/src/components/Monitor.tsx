@@ -20,6 +20,7 @@ import { requestMonitorFrame } from "../store/projectActions";
 import { bytesToObjectUrl, describeBytes } from "../core/ipcBytes";
 import { useThumbUrl } from "../hooks/useThumbUrl";
 import { msToTimecode, snapToFrame } from "../core/timecode";
+import { IconPlay, IconPause, IconPrevFrame, IconNextFrame, IconToStart, IconToEnd } from "./icons";
 import type { Asset } from "../types/project";
 
 /** 后端错误本来就是中文人话，意外类型给一句兜底，别把英文堆栈丢到画面上。 */
@@ -64,6 +65,16 @@ export function Monitor() {
   // ---- 素材预览的本地播放头与播放态（与序列播放互不干扰）----
   const [assetTimeMs, setAssetTimeMs] = useState(0);
   const [assetPlaying, setAssetPlaying] = useState(false);
+  /** 预览分辨率分母：1=完整，2/4/8/24=降采样（低配机流畅预览） */
+  const [previewScale, setPreviewScale] = useState(1);
+  // pump 的闭包里读不到最新 state，走 ref
+  const previewScaleRef = useRef(1);
+  useEffect(() => {
+    previewScaleRef.current = previewScale;
+    // 分辨率变化立即重取当前帧
+    wantedRef.current = Math.max(0, playheadMs);
+    void pump();
+  }, [previewScale]);
   // 播放推进用 ref 当权威，state 只负责渲染，避免每帧 setState 引用抖动
   const assetTimeRef = useRef(0);
   const setAssetTime = useCallback((ms: number) => {
@@ -167,8 +178,14 @@ export function Monitor() {
         if (!seq) return;
 
         const stage = stageRef.current;
-        const maxWidth = stage ? Math.max(1, Math.round(stage.clientWidth)) : undefined;
-        const maxHeight = stage ? Math.max(1, Math.round(stage.clientHeight)) : undefined;
+        let maxWidth = stage ? Math.max(1, Math.round(stage.clientWidth)) : undefined;
+        let maxHeight = stage ? Math.max(1, Math.round(stage.clientHeight)) : undefined;
+        // 预览分辨率分母：1=完整，2/4/8/24=按比例降采样（低配机流畅预览）
+        const scale = previewScaleRef.current;
+        if (scale > 1 && maxWidth && maxHeight) {
+          maxWidth = Math.max(160, Math.round(maxWidth / scale));
+          maxHeight = Math.max(90, Math.round(maxHeight / scale));
+        }
 
         try {
           const bytes = await requestMonitorFrame(seq.id, timeMs, maxWidth, maxHeight);
@@ -348,6 +365,12 @@ export function Monitor() {
     setPlayhead(snapToFrame(playheadMs + frames * frameMs, sequence.frameRate));
   };
 
+  /** 跳到指定时刻（Home/End 按钮用），顺便暂停 */
+  const seek = (atMs: number) => {
+    useAppStore.getState().pause();
+    setPlayhead(Math.max(0, Math.min(sequence.durationMs, atMs)));
+  };
+
   return (
     <section className="panel">
       <div className="panel-head">
@@ -387,19 +410,35 @@ export function Monitor() {
       </div>
 
       <div className="monitor-bar">
-        <button type="button" className="ctl" title="上一帧" onClick={() => stepBy(-1)}>
-          ◀|
+        <button type="button" className="ctl" title="上一帧（←）" onClick={() => stepBy(-1)}>
+          <IconPrevFrame />
+        </button>
+        <button
+          type="button"
+          className="ctl ctl-play"
+          title="播放 / 暂停（空格）"
+          onClick={togglePlaying}
+        >
+          {playing ? <IconPause /> : <IconPlay />}
+        </button>
+        <button type="button" className="ctl" title="下一帧（→）" onClick={() => stepBy(1)}>
+          <IconNextFrame />
         </button>
         <button
           type="button"
           className="ctl"
-          title="播放 / 暂停（空格）"
-          onClick={togglePlaying}
+          title="跳到开头（Home）"
+          onClick={() => seek(0)}
         >
-          {playing ? "暂停" : "播放"}
+          <IconToStart />
         </button>
-        <button type="button" className="ctl" title="下一帧" onClick={() => stepBy(1)}>
-          |▶
+        <button
+          type="button"
+          className="ctl"
+          title="跳到结尾（End）"
+          onClick={() => seek(sequence.durationMs)}
+        >
+          <IconToEnd />
         </button>
         <span className="timecode">{msToTimecode(playheadMs, sequence.frameRate)}</span>
         {playing && playbackRate !== 1 && (
@@ -408,6 +447,19 @@ export function Monitor() {
           </span>
         )}
         <span style={{ flex: 1 }} />
+        {/* 预览分辨率：完整 / 1/2 / 1/4 / 1/8 / 1/24（剪映习惯，低配机器用低分辨率预览） */}
+        <select
+          className="ctl ctl-select"
+          title="预览分辨率：越低越流畅"
+          value={previewScale}
+          onChange={(e) => setPreviewScale(Number(e.target.value))}
+        >
+          <option value={1}>完整</option>
+          <option value={2}>1/2</option>
+          <option value={4}>1/4</option>
+          <option value={8}>1/8</option>
+          <option value={24}>1/24</option>
+        </select>
         <span className="ctl">
           {sequence.colorSpace} · {sequence.frameRate} 帧/秒
         </span>

@@ -72,6 +72,18 @@ pub(crate) struct FramePlan {
     /// 片段来源指纹：素材路径 + 入出点 + 速度 + 倒放。
     /// 只拿路径做缓存键的话，修剪或变速后同一时刻会命中旧画面。
     pub source_key: Option<String>,
+    /// 片段入场转场：当前时刻落在转场窗口内时才有值。
+    pub transition: Option<TransitionPlan>,
+}
+
+/// 一帧的入场转场计划：前片段画面来源与混合进度。
+pub(crate) struct TransitionPlan {
+    /// 转场类型：`crossDissolve` / `dipToBlack` / `dipToWhite`，未知类型按叠化处理。
+    pub kind: String,
+    /// 片段头部内的进度，0.0 是片段起点，1.0 是转场结束。
+    pub progress: f32,
+    /// 前一个相邻片段的画面来源；`None` 表示没有前片段，按黑/白渐入。
+    pub previous: Option<(String, f64)>,
 }
 
 /// 请求一帧，返回编码好的 PNG 字节。
@@ -113,10 +125,15 @@ pub fn request_frame(
     };
 
     // 缓存键带上效果链指纹：任何参数一改，指纹就变，旧画面自然不会被误命中。
+    // 转场类型 / 时长 / 前片段来源也进指纹，换转场后不会回放旧画面。
+    let transition_key = plan.transition.as_ref().map(|t| {
+        format!("{}|{:.6}|{:?}", t.kind, t.progress, t.previous)
+    });
     let fingerprint = chain_fingerprint(
         &plan.graph,
         &plan.order,
         plan.source_key.as_deref(),
+        transition_key.as_deref(),
     );
     let bucket = format!("{sequence_id}-{fingerprint:016x}");
     let path = cache::frame_file(&cache_dir, &bucket, plan.width, plan.height, plan.snapped_ms);
@@ -136,17 +153,8 @@ pub fn request_frame(
         return Ok(Response::new(bytes));
     }
 
-    // 两级都没命中：真解一帧，再过一遍效果栈。
-    let mut frame = match &plan.source {
-        Some((asset, local_ms)) => {
-            decode::decode_frame(Path::new(asset), *local_ms, plan.width, plan.height)?
-        }
-        // 这一刻没有画面：出一张透明帧，效果链照样跑，监视器不会白屏。
-        None => Frame::new(plan.width, plan.height),
-    };
-    if !plan.order.is_empty() {
-        frame = composite(&plan.graph, &plan.order, frame);
-    }
+    // 两级都没命中：真解一帧，再过一遍效果栈；转场窗口内再混合前片段。
+    let frame = render_plan(&plan)?;
 
     let png_bytes = png::encode_rgba8(plan.width, plan.height, &frame_to_rgba8(&frame));
 
@@ -296,35 +304,10 @@ pub(crate) fn plan_frame(
     keyframes.bake_graph(&mut graph, snapped_ms);
     let order = topo_order(&graph).map_err(|e| e.to_string())?;
 
-    let source = locate_clip(sequence, time_ms).and_then(|clip| {
-        let asset = project.assets.iter().find(|a| a.id == clip.asset_id)?;
-        let speed = if clip.speed.abs() < f64::EPSILON {
-            1.0
-        } else {
-            clip.speed
-        };
-        let offset = (time_ms - clip.start_ms) * speed;
-        // 倒放：从出点往回数。两侧都夹到不小于 0，ffmpeg 才不会拿到负时刻。
-        let local_ms = if clip.reversed {
-            (clip.out_ms - offset).max(0.0)
-        } else {
-            (clip.in_ms + offset).max(0.0)
-        };
-        Some((asset.path.clone(), local_ms))
-    });
-
-    let source_key = locate_clip(sequence, time_ms).and_then(|clip| {
-        let asset = project.assets.iter().find(|a| a.id == clip.asset_id)?;
-        let speed = if clip.speed.abs() < f64::EPSILON {
-            1.0
-        } else {
-            clip.speed
-        };
-        Some(format!(
-            "{}|{:.3}|{:.3}|{:.6}|{}",
-            asset.path, clip.in_ms, clip.out_ms, speed, clip.reversed
-        ))
-    });
+    let hit = locate_clip(sequence, time_ms);
+    let source = hit.and_then(|clip| clip_source(project, clip, time_ms));
+    let source_key = hit.and_then(|clip| clip_source_key(project, clip));
+    let transition = hit.and_then(|clip| plan_transition(sequence, project, clip, snapped_ms));
 
     Ok(FramePlan {
         width,
@@ -334,7 +317,190 @@ pub(crate) fn plan_frame(
         order,
         source,
         source_key,
+        transition,
     })
+}
+
+/// 片段在某一时刻对应的素材路径与素材内时刻。
+///
+/// 时刻会夹到片段的入出点之间：转场取前片段画面时，时刻可能已经越过它的
+/// 出点（本模型里相邻片段不重叠），这时停在最后一帧，不拿越界时间喂 ffmpeg。
+fn clip_source(project: &Project, clip: &Clip, time_ms: f64) -> Option<(String, f64)> {
+    let asset = project.assets.iter().find(|a| a.id == clip.asset_id)?;
+    let speed = if clip.speed.abs() < f64::EPSILON {
+        1.0
+    } else {
+        clip.speed
+    };
+    let offset = (time_ms - clip.start_ms) * speed;
+    let low = clip.in_ms.min(clip.out_ms);
+    let high = clip.in_ms.max(clip.out_ms);
+    // 倒放：从出点往回数；正向：从入点往后数。两侧都夹到素材范围内。
+    let local_ms = if clip.reversed {
+        (clip.out_ms - offset).clamp(low, high)
+    } else {
+        (clip.in_ms + offset).clamp(low, high)
+    };
+    Some((asset.path.clone(), local_ms))
+}
+
+/// 片段来源指纹：素材路径 + 入出点 + 速度 + 倒放。
+fn clip_source_key(project: &Project, clip: &Clip) -> Option<String> {
+    let asset = project.assets.iter().find(|a| a.id == clip.asset_id)?;
+    let speed = if clip.speed.abs() < f64::EPSILON {
+        1.0
+    } else {
+        clip.speed
+    };
+    Some(format!(
+        "{}|{:.3}|{:.3}|{:.6}|{}",
+        asset.path, clip.in_ms, clip.out_ms, speed, clip.reversed
+    ))
+}
+
+/// 片段头部的入场转场计划；当前时刻不在窗口内或没有转场时返回 `None`。
+fn plan_transition(
+    sequence: &Sequence,
+    project: &Project,
+    clip: &Clip,
+    snapped_ms: f64,
+) -> Option<TransitionPlan> {
+    let transition = clip.transition_in.as_ref()?;
+    // 转场不能比片段本身长，超出时按片段时长截断。
+    let duration = transition.duration_ms.min(clip.duration_ms);
+    if duration <= 0.0 {
+        return None;
+    }
+    let local_ms = snapped_ms - clip.start_ms;
+    if local_ms >= duration {
+        return None;
+    }
+    let progress = (local_ms / duration).clamp(0.0, 1.0) as f32;
+
+    // 前一个相邻片段：同一轨道上在本片段起点之前结束（不重叠），
+    // 取 end_ms 最接近本片段起点的那一个。
+    let previous = previous_clip(sequence, clip).and_then(|prev| {
+        // 相邻片段不覆盖当前时刻，停在它的最后一帧（留 1ms 避开素材 EOF）。
+        let prev_time = snapped_ms.min(prev.end_ms() - 1.0);
+        clip_source(project, prev, prev_time)
+    });
+
+    Some(TransitionPlan {
+        kind: transition.kind.clone(),
+        progress,
+        previous,
+    })
+}
+
+/// 同一轨道上排在本片段之前、且不重叠的最后一个片段。
+fn previous_clip<'a>(sequence: &'a Sequence, current: &Clip) -> Option<&'a Clip> {
+    let track = sequence.tracks.iter().find(|t| t.id == current.track_id)?;
+    track
+        .clips
+        .iter()
+        .filter(|c| c.enabled && c.id != current.id && c.end_ms() <= current.start_ms)
+        .max_by(|a, b| {
+            a.end_ms()
+                .partial_cmp(&b.end_ms())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+}
+
+/// 按计划出一帧：解码 → 过效果栈 → 转场窗口内再混合前片段。
+///
+/// 预览与导出共用这一条路径，保证两边画面完全一致；前片段也走同一套
+/// 解码与效果链求值，不在转场里另写一份。
+pub(crate) fn render_plan(plan: &FramePlan) -> Result<Frame, String> {
+    let mut frame = match &plan.source {
+        Some((asset, local_ms)) => {
+            decode::decode_frame(Path::new(asset), *local_ms, plan.width, plan.height)?
+        }
+        // 这一刻没有画面：出一张透明帧，效果链照样跑，监视器不会白屏。
+        None => Frame::new(plan.width, plan.height),
+    };
+    if !plan.order.is_empty() {
+        frame = composite(&plan.graph, &plan.order, frame);
+    }
+
+    let Some(transition) = &plan.transition else {
+        return Ok(frame);
+    };
+
+    // 前片段解不出来时不拖垮整帧，退化成从黑/白渐入。
+    let previous = transition.previous.as_ref().and_then(|(asset, local_ms)| {
+        let mut prev =
+            decode::decode_frame(Path::new(asset), *local_ms, plan.width, plan.height).ok()?;
+        if !plan.order.is_empty() {
+            prev = composite(&plan.graph, &plan.order, prev);
+        }
+        Some(prev)
+    });
+
+    Ok(apply_transition(
+        &transition.kind,
+        transition.progress,
+        previous.as_ref(),
+        &frame,
+    ))
+}
+
+/// 按转场类型把前后两帧混合成一帧。
+///
+/// `progress` 是片段头部内的进度 0.0 ~ 1.0；`previous` 为 `None` 表示没有
+/// 前片段，`crossDissolve` / `dipToBlack` 退化为从黑场渐入，`dipToWhite`
+/// 退化为从白场渐入。未知类型一律按叠化处理。
+pub(crate) fn apply_transition(
+    kind: &str,
+    progress: f32,
+    previous: Option<&Frame>,
+    current: &Frame,
+) -> Frame {
+    let p = progress.clamp(0.0, 1.0);
+    let black = || Frame::filled(current.width, current.height, [0.0, 0.0, 0.0, 1.0]);
+
+    match kind {
+        "dipToBlack" | "dipToWhite" => {
+            let color = if kind == "dipToWhite" {
+                Frame::filled(current.width, current.height, [1.0, 1.0, 1.0, 1.0])
+            } else {
+                black()
+            };
+            match previous {
+                // 前半段前片段渐暗 / 渐白，后半段本片段从目标色渐入。
+                // 中点归前半段：p = 0.5 时正好落到纯黑 / 纯白。
+                Some(prev) if p <= 0.5 => mix_frames(prev, &color, p * 2.0),
+                Some(_) => mix_frames(&color, current, (p - 0.5) * 2.0),
+                // 没有前片段：直接从黑 / 白渐入。
+                None => mix_frames(&color, current, p),
+            }
+        }
+        // crossDissolve 与无法识别的类型一律按叠化。
+        _ => match previous {
+            Some(prev) => mix_frames(prev, current, p),
+            None => mix_frames(&black(), current, p),
+        },
+    }
+}
+
+/// 线性混合两帧：`weight = 0` 取 `from`，`weight = 1` 取 `to`。
+fn mix_frames(from: &Frame, to: &Frame, weight: f32) -> Frame {
+    let w = weight.clamp(0.0, 1.0);
+    if from.width != to.width
+        || from.height != to.height
+        || from.pixels.len() != to.pixels.len()
+    {
+        // 画幅不一致时不做混合，直接给目标帧（正常解码路径都按同一画幅出图）。
+        return to.clone();
+    }
+    let mut out = to.clone();
+    for (px, (a, b)) in out
+        .pixels
+        .iter_mut()
+        .zip(from.pixels.iter().zip(to.pixels.iter()))
+    {
+        *px = a + (b - a) * w;
+    }
+    out
 }
 
 /// 按预览缩放与显示尺寸定输出画幅。
@@ -387,7 +553,7 @@ fn locate_clip(sequence: &Sequence, time_ms: f64) -> Option<&Clip> {
         if (solo && !track.solo) || track.index < best_index {
             continue;
         }
-        if let Some(clip) = track.clips.iter().find(|c| c.covers(time_ms)) {
+        if let Some(clip) = track.clips.iter().find(|c| c.covers(time_ms) && c.enabled) {
             best = Some(clip);
             best_index = track.index;
         }
@@ -460,9 +626,16 @@ fn is_primary_plug(plug: &str) -> bool {
 ///
 /// 缓存键里带上它，参数一改就换一个键，旧画面不会被误当成新结果。
 /// 参数按键名排序后再哈希——`HashMap` 的遍历顺序不稳定，不排序指纹就会飘。
-fn chain_fingerprint(graph: &Graph, order: &[String], seed: Option<&str>) -> u64 {
+fn chain_fingerprint(
+    graph: &Graph,
+    order: &[String],
+    seed: Option<&str>,
+    transition: Option<&str>,
+) -> u64 {
     let mut hasher = DefaultHasher::new();
     seed.unwrap_or("").hash(&mut hasher);
+    // 转场状态也进指纹：类型 / 进度 / 前片段一变就换键，旧画面不会被误命中。
+    transition.unwrap_or("").hash(&mut hasher);
 
     for id in order {
         let Some(node) = graph.node(id) else { continue };
@@ -565,14 +738,14 @@ mod tests {
         };
         let order = vec!["n1".to_string()];
 
-        let before = chain_fingerprint(&graph, &order, None);
+        let before = chain_fingerprint(&graph, &order, None, None);
         graph.nodes[0].set_param("contrast", ParamValue::Number(20.0));
-        let after = chain_fingerprint(&graph, &order, None);
+        let after = chain_fingerprint(&graph, &order, None, None);
 
         assert_ne!(before, after);
 
         // 同样的参数再算一遍必须一样，不然每次请求都会重算。
-        assert_eq!(after, chain_fingerprint(&graph, &order, None));
+        assert_eq!(after, chain_fingerprint(&graph, &order, None, None));
     }
 
     /// 换成别的素材，指纹也要变。
@@ -586,8 +759,8 @@ mod tests {
         };
         let order = vec!["n1".to_string()];
         assert_ne!(
-            chain_fingerprint(&graph, &order, Some("C:/a.mp4")),
-            chain_fingerprint(&graph, &order, Some("C:/b.mp4"))
+            chain_fingerprint(&graph, &order, Some("C:/a.mp4"), None),
+            chain_fingerprint(&graph, &order, Some("C:/b.mp4"), None)
         );
     }
 
@@ -680,6 +853,7 @@ mod tests {
             codec: "h264".into(),
             has_audio: true,
             missing: false,
+            bin_id: None,
         });
         project.sequences[0].tracks[0].clips.push(Clip {
             id: "c1".into(),
@@ -696,6 +870,11 @@ mod tests {
             enable_3d: false,
             transform_3d: None,
             text: None,
+            enabled: true,
+            label: None,
+            transition_in: None,
+            audio_fade_in_ms: None,
+            audio_fade_out_ms: None,
         });
 
         let store = KeyframeStore::new();
@@ -750,7 +929,6 @@ mod tests {
                 other => panic!("contrast 应当是数值，实际 {other:?}"),
             }
         };
-
         assert!((contrast_at(400.0) - 40.0).abs() < 1e-4, "0.4s 处应为 40");
         assert!((contrast_at(200.0) - 20.0).abs() < 1e-4, "0.2s 处应为 20");
 
@@ -759,9 +937,170 @@ mod tests {
         let order_a = plan_a.order.clone();
         let plan_b = plan_frame(&project, &sequence_id, 400.0, (1920, 1080), &store).unwrap();
         assert_ne!(
-            chain_fingerprint(&plan_a.graph, &order_a, None),
-            chain_fingerprint(&plan_b.graph, &plan_b.order, None),
+            chain_fingerprint(&plan_a.graph, &order_a, None, None),
+            chain_fingerprint(&plan_b.graph, &plan_b.order, None, None),
             "关键帧取值不同，指纹必须不同"
         );
+    }
+
+    /// 叠化半程：前片段与本片段各取一半。
+    #[test]
+    fn cross_dissolve_mixes_halfway() {
+        let prev = Frame::filled(1, 1, [0.0, 0.0, 0.0, 1.0]);
+        let current = Frame::filled(1, 1, [1.0, 1.0, 1.0, 1.0]);
+
+        let out = apply_transition("crossDissolve", 0.5, Some(&prev), &current);
+        assert!((out.pixels[0] - 0.5).abs() < 1e-6);
+        assert!((out.pixels[1] - 0.5).abs() < 1e-6);
+        assert!((out.pixels[2] - 0.5).abs() < 1e-6);
+        assert_eq!(out.pixels[3], 1.0);
+    }
+
+    /// 黑场过渡：中点必须是纯黑，两侧各走一半。
+    #[test]
+    fn dip_to_black_goes_through_black() {
+        let prev = Frame::filled(1, 1, [1.0, 1.0, 1.0, 1.0]);
+        let current = Frame::filled(1, 1, [1.0, 1.0, 1.0, 1.0]);
+
+        let mid = apply_transition("dipToBlack", 0.5, Some(&prev), &current);
+        assert!(mid.pixels[..3].iter().all(|v| v.abs() < 1e-6), "中点应当是纯黑");
+
+        let quarter = apply_transition("dipToBlack", 0.25, Some(&prev), &current);
+        assert!((quarter.pixels[0] - 0.5).abs() < 1e-6, "1/4 处前片段压到半亮");
+
+        let three_quarter = apply_transition("dipToBlack", 0.75, Some(&prev), &current);
+        assert!(
+            (three_quarter.pixels[0] - 0.5).abs() < 1e-6,
+            "3/4 处本片段从黑升到半亮"
+        );
+    }
+
+    /// 白场过渡：没有前片段时直接从白场渐入。
+    #[test]
+    fn dip_to_white_without_previous_fades_from_white() {
+        let current = Frame::filled(1, 1, [0.0, 0.0, 0.0, 1.0]);
+        let out = apply_transition("dipToWhite", 0.5, None, &current);
+        assert!((out.pixels[0] - 0.5).abs() < 1e-6);
+        assert!((out.pixels[1] - 0.5).abs() < 1e-6);
+        assert!((out.pixels[2] - 0.5).abs() < 1e-6);
+    }
+
+    /// 没有前片段的叠化退化为从黑场渐入。
+    #[test]
+    fn cross_dissolve_without_previous_fades_from_black() {
+        let current = Frame::filled(1, 1, [1.0, 1.0, 1.0, 1.0]);
+        let out = apply_transition("crossDissolve", 0.25, None, &current);
+        assert!((out.pixels[0] - 0.25).abs() < 1e-6);
+    }
+
+    /// 无法识别的转场类型按叠化处理。
+    #[test]
+    fn unknown_transition_falls_back_to_cross_dissolve() {
+        let prev = Frame::filled(1, 1, [0.0, 0.0, 0.0, 1.0]);
+        let current = Frame::filled(1, 1, [1.0, 1.0, 1.0, 1.0]);
+
+        let unknown = apply_transition("wipe", 0.5, Some(&prev), &current);
+        let dissolve = apply_transition("crossDissolve", 0.5, Some(&prev), &current);
+        assert_eq!(unknown.pixels, dissolve.pixels);
+    }
+
+    /// 造一个带两个相邻视频片段的工程，第二个片段可带入场转场。
+    fn project_with_two_clips(transition: Option<crate::timeline::model::Transition>) -> (Project, String) {
+        use crate::project::model::Asset;
+        use crate::project::serialize::new_project;
+        use crate::timeline::model::Clip;
+
+        let mut project = new_project("转场计划");
+        let sequence_id = project.sequences[0].id.clone();
+        let track_id = project.sequences[0].tracks[0].id.clone();
+
+        for (id, path) in [("a1", "C:/media/a.mp4"), ("a2", "C:/media/b.mp4")] {
+            project.assets.push(Asset {
+                id: id.into(),
+                path: path.into(),
+                name: id.into(),
+                kind: crate::project::model::AssetKind::Video,
+                duration_ms: 10_000.0,
+                width: 1920,
+                height: 1080,
+                frame_rate: 25.0,
+                codec: "h264".into(),
+                has_audio: true,
+                missing: false,
+                bin_id: None,
+            });
+        }
+
+        let clip = |id: &str,
+                    asset: &str,
+                    start_ms: f64,
+                    transition_in: Option<crate::timeline::model::Transition>|
+         -> Clip {
+            Clip {
+                id: id.into(),
+                asset_id: asset.into(),
+                track_id: track_id.clone(),
+                start_ms,
+                duration_ms: 1000.0,
+                in_ms: 0.0,
+                out_ms: 1000.0,
+                speed: 1.0,
+                reversed: false,
+                node_id: "n1".into(),
+                compound_id: None,
+                enable_3d: false,
+                transform_3d: None,
+                text: None,
+                enabled: true,
+                label: None,
+                transition_in,
+                audio_fade_in_ms: None,
+                audio_fade_out_ms: None,
+            }
+        };
+
+        let first = clip("c1", "a1", 0.0, None);
+        let second = clip("c2", "a2", 1000.0, transition);
+        project.sequences[0].tracks[0].clips.push(first);
+        project.sequences[0].tracks[0].clips.push(second);
+        (project, sequence_id)
+    }
+
+    /// 转场窗口内要能给出前片段来源与线性进度。
+    #[test]
+    fn plan_frame_reports_transition_in_window() {
+        let (project, sequence_id) = project_with_two_clips(Some(
+            crate::timeline::model::Transition {
+                kind: "crossDissolve".into(),
+                duration_ms: 200.0,
+            },
+        ));
+        let store = KeyframeStore::new();
+
+        // 1050ms 按 25fps 吸附到 1040ms，片段内偏移 40ms，进度 0.2。
+        let plan = plan_frame(&project, &sequence_id, 1050.0, (640, 360), &store).unwrap();
+        let transition = plan.transition.as_ref().expect("这一刻应当落在转场窗口内");
+        assert_eq!(transition.kind, "crossDissolve");
+        assert!(
+            (transition.progress - 0.2).abs() < 1e-4,
+            "吸附后进度应为 0.2，实际 {}",
+            transition.progress
+        );
+        let (path, at) = transition.previous.as_ref().expect("应当找到前片段");
+        assert_eq!(path, "C:/media/a.mp4");
+        assert!((*at - 999.0).abs() < 1e-6, "前片段应停在最后一帧");
+
+        // 窗口结束后不再有转场计划。
+        let after = plan_frame(&project, &sequence_id, 1200.0, (640, 360), &store).unwrap();
+        assert!(after.transition.is_none());
+    }
+
+    /// 片段没有转场时不能凭空造出转场计划。
+    #[test]
+    fn plan_frame_without_transition_has_none() {
+        let (project, sequence_id) = project_with_two_clips(None);
+        let store = KeyframeStore::new();
+        let plan = plan_frame(&project, &sequence_id, 1050.0, (640, 360), &store).unwrap();
+        assert!(plan.transition.is_none());
     }
 }

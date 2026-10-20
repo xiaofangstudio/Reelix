@@ -6,14 +6,16 @@
  */
 
 export * as project from "./project";
+export * as audio from "./audio";
 export * as dialog from "./dialog";
 export * as media from "./media";
 export * as timeline from "./timeline";
 export * as subtitle from "./subtitle";
+export * as generators from "./generators";
 export * as reconstruct from "./reconstruct";
 export * as graph from "./graph";
 export * as keyframe from "./keyframe";
-export * as render from "./render";
 export * as exportApi from "./export";
+export * as render from "./render";
 export * as history from "./history";
 export * as settings from "./settings";

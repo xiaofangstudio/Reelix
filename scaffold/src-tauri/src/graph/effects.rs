@@ -548,11 +548,175 @@ pub fn curves(input: &Frame, strength: f32) -> Frame {
 
 /// LUT：`file` 为空时原样返回（未载入就是恒等）。
 ///
-/// 立方体 LUT 的解析与三线性查表要等素材管线把 `.cube` 读进来后接入，
-/// 在此之前保证「没选文件不改变画面」，不会静默输出空白。
+/// .cube LUT 缓存：路径 → 解析后的查找表（同一文件只读一次盘）。
+fn lut_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, Option<LutTable>>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Option<LutTable>>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// 解析后的 3D LUT：size³ 个 RGB 浮点。
+pub struct LutTable {
+    size: usize,
+    /// 按 R 最快、其次 G、最后 B 排列（.cube 的行序）
+    data: Vec<[f32; 3]>,
+}
+
+/// 解析 Adobe `.cube`（LUT_3D_SIZE + N³ 行 RGB，0..1）。
+fn parse_cube(text: &str) -> Option<LutTable> {
+    let mut size = 0usize;
+    let mut data: Vec<[f32; 3]> = Vec::new();
+    for line in text.lines() {
+        let l = line.trim();
+        if l.is_empty()
+            || l.starts_with('#')
+            || l.starts_with("TITLE")
+            || l.starts_with("DOMAIN_MIN")
+            || l.starts_with("DOMAIN_MAX")
+        {
+            continue;
+        }
+        if let Some(rest) = l.strip_prefix("LUT_3D_SIZE") {
+            size = rest.trim().parse().ok()?;
+            data.reserve(size * size * size);
+            continue;
+        }
+        let parts: Vec<&str> = l.split_whitespace().collect();
+        if parts.len() >= 3 {
+            let r: f32 = parts[0].parse().ok()?;
+            let g: f32 = parts[1].parse().ok()?;
+            let b: f32 = parts[2].parse().ok()?;
+            data.push([r, g, b]);
+        }
+    }
+    if size >= 2 && data.len() >= size * size * size {
+        Some(LutTable { size, data })
+    } else {
+        None
+    }
+}
+
+/// 三线性查表：输入 RGB → 输出 RGB。
+fn lut_sample(table: &LutTable, rgb: [f32; 3]) -> [f32; 3] {
+    let n = table.size;
+    let maxi = (n - 1) as f32;
+    let pos: Vec<f32> = rgb.iter().map(|c| (c.clamp(0.0, 1.0)) * maxi).collect();
+    let lo: Vec<usize> = pos.iter().map(|p| p.floor() as usize).collect();
+    let hi: Vec<usize> = pos
+        .iter()
+        .map(|p| ((p.floor() as usize) + 1).min(n - 1))
+        .collect();
+    let frac: Vec<f32> = pos.iter().zip(lo.iter()).map(|(p, l)| p - *l as f32).collect();
+    let idx = |r: usize, g: usize, b: usize| -> [f32; 3] {
+        let i = (b * n + g) * n + r;
+        table.data.get(i).copied().unwrap_or([0.0, 0.0, 0.0])
+    };
+    let mut out = [0.0f32; 3];
+    for c in 0..3 {
+        let c000 = idx(lo[0], lo[1], lo[2])[c];
+        let c100 = idx(hi[0], lo[1], lo[2])[c];
+        let c010 = idx(lo[0], hi[1], lo[2])[c];
+        let c110 = idx(hi[0], hi[1], lo[2])[c];
+        let c001 = idx(lo[0], lo[1], hi[2])[c];
+        let c101 = idx(hi[0], lo[1], hi[2])[c];
+        let c011 = idx(lo[0], hi[1], hi[2])[c];
+        let c111 = idx(hi[0], hi[1], hi[2])[c];
+        let fx = frac[0];
+        let fy = frac[1];
+        let fz = frac[2];
+        let c00 = c000 * (1.0 - fx) + c100 * fx;
+        let c10 = c010 * (1.0 - fx) + c110 * fx;
+        let c01 = c001 * (1.0 - fx) + c101 * fx;
+        let c11 = c011 * (1.0 - fx) + c111 * fx;
+        let c0 = c00 * (1.0 - fy) + c10 * fy;
+        let c1 = c01 * (1.0 - fy) + c11 * fy;
+        out[c] = c0 * (1.0 - fz) + c1 * fz;
+    }
+    out
+}
+
+/// LUT 调色：真读 `.cube` 文件并三线性查表。
+/// 没给文件 / 文件读不了 / 不是合法 .cube 时原样返回（不会静默输出黑帧）。
 pub fn lut(input: &Frame, file: &str) -> Frame {
-    let _ = file;
-    input.clone()
+    if file.trim().is_empty() {
+        return input.clone();
+    }
+    let table = {
+        let mut cache = match lut_cache().lock() {
+            Ok(g) => g,
+            Err(_) => return input.clone(),
+        };
+        if !cache.contains_key(file) {
+            let parsed = std::fs::read_to_string(file).ok().and_then(|t| parse_cube(&t));
+            cache.insert(file.to_string(), parsed);
+        }
+        match cache.get(file).and_then(|t| t.as_ref()) {
+            Some(t) => LutTable {
+                size: t.size,
+                data: t.data.clone(),
+            },
+            None => return input.clone(),
+        }
+    };
+    let _ = &table;
+    match lut_flat(&file) {
+        Some(flat) => crate::gpu::apply_lut(input, &flat).unwrap_or_else(|| lut_cpu(input, &table)),
+        None => lut_cpu(input, &table),
+    }
+}
+
+/// 从 LUT 缓存里取扁平的 33³×RGBA 浮点表（GPU 3D 纹理要的排布）。
+/// 解析失败 / 尺寸不含 33 时返回 None，调用方回落到 CPU。
+fn lut_flat(file: &str) -> Option<Vec<f32>> {
+    let cache = lut_cache().lock().ok()?;
+    if !cache.contains_key(file) {
+        // 没缓存过：现读一次（文件很小，代价可忽略）
+        drop(cache);
+        let text = std::fs::read_to_string(file).ok()?;
+        let parsed = parse_cube(&text)?;
+        let mut cache = lut_cache().lock().ok()?;
+        cache.insert(file.to_string(), Some(parsed));
+        drop(cache);
+        return lut_flat(file);
+    }
+    let table = cache.get(file)?.as_ref()?;
+    if table.size < 2 || table.data.len() < table.size.pow(3) * 4 {
+        return None;
+    }
+    // 尺寸不是 33 时按最近邻重采样到 33³
+    let n = 33usize;
+    let size = table.size;
+    let mut out = Vec::with_capacity(n * n * n * 4);
+    let ri = |v: usize| v.min(size - 1);
+    for b in 0..n {
+        for g in 0..n {
+            for r in 0..n {
+                // 32->(size-1) 最近邻映射
+                let rb = (r as f32 / 32.0 * (size - 1) as f32).round() as usize;
+                let gb = (g as f32 / 32.0 * (size - 1) as f32).round() as usize;
+                let bb = (b as f32 / 32.0 * (size - 1) as f32).round() as usize;
+                let idx = (ri(bb) * size + ri(gb)) * size + ri(rb);
+                let px = table.data[idx];
+                out.push(px[0]);
+                out.push(px[1]);
+                out.push(px[2]);
+                out.push(1.0);
+            }
+        }
+    }
+    Some(out)
+}
+
+/// CPU 版 LUT 采样（原实现，GPU 不可用时走这条）。
+fn lut_cpu(input: &Frame, table: &LutTable) -> Frame {
+    let mut out = input.clone();
+    for px in out.pixels.chunks_exact_mut(4) {
+        let mapped = lut_sample(table, [px[0], px[1], px[2]]);
+        px[0] = mapped[0].clamp(0.0, 1.0);
+        px[1] = mapped[1].clamp(0.0, 1.0);
+        px[2] = mapped[2].clamp(0.0, 1.0);
+    }
+    out
 }
 
 /// 遮罩：用第二路画面（或输入自身的 alpha）当覆盖率，乘到输入 alpha 上。
@@ -841,7 +1005,6 @@ pub fn mask_shape(
     let (sin_r, cos_r) = (-rotation.to_radians()).sin_cos();
     // 羽化以画面短边为基准，0 表示硬边。
     let f = feather.clamp(0.0, 100.0) / 100.0 * w.min(h) * 0.5;
-    let is_pen = shape == "pen";
 
     let mut out = input.clone();
     for y in 0..input.height {
@@ -851,10 +1014,27 @@ pub fn mask_shape(
             let dy0 = y as f32 + 0.5 - cy;
             let dx = dx0 * cos_r - dy0 * sin_r;
             let dy = dx0 * sin_r + dy0 * cos_r;
-            let signed = if is_pen {
-                sd_regular_polygon(dx, dy, half_w, half_h, points)
-            } else {
-                sd_rounded_rect(dx, dy, half_w, half_h, r)
+            let signed = match shape {
+                // 钢笔/自由多边形
+                "pen" => sd_regular_polygon(dx, dy, half_w, half_h, points),
+                // 椭圆：单位圆缩放的近似 SDF
+                "ellipse" => {
+                    let d = ((dx / half_w.max(1e-4)).powi(2) + (dy / half_h.max(1e-4)).powi(2))
+                        .sqrt()
+                        - 1.0;
+                    d * half_w.min(half_h).max(1e-4)
+                }
+                // 星形：极坐标半径调制的近似 SDF（角点数决定尖角数量）
+                "star" => {
+                    let theta = dy.atan2(dx);
+                    let rr = 1.0 + 0.45 * (points as f32 * theta).cos();
+                    let d = ((dx / half_w.max(1e-4)).powi(2) + (dy / half_h.max(1e-4)).powi(2))
+                        .sqrt()
+                        - rr;
+                    d * half_w.min(half_h).max(1e-4)
+                }
+                // 矩形 / 圆角矩形（roundness 控制圆角）
+                _ => sd_rounded_rect(dx, dy, half_w, half_h, r),
             };
             let mut coverage = if f <= 1e-4 {
                 if signed <= 0.0 {
@@ -1079,7 +1259,22 @@ pub fn apply(
             num(params, "shadows", 0.0),
         ),
         "curves" => curves(input, num(params, "strength", 100.0)),
-        "lut" => lut(input, text(params, "file", "")),
+        "gpuLut" => {
+            // GPU 3D LUT（真 GPU）；设备不可用/无表时回落 CPU 版 LUT
+            let file = text(params, "file", "");
+            match lut_flat(&file) {
+                Some(flat) => crate::gpu::apply_lut(input, &flat).unwrap_or_else(|| lut(input, &file)),
+                None => lut(input, &file),
+            }
+        }
+        "lut" => {
+            // 先试 GPU 3D LUT；CPU LUT 已有解析过的 33³ 表时用它，否则回落
+            let file = text(params, "file", "");
+            match lut_flat(&file) {
+                Some(flat) => crate::gpu::apply_lut(input, &flat).unwrap_or_else(|| lut(input, file)),
+                None => lut(input, file),
+            }
+        }
         "mono" => mono(
             input,
             flag(params, "grayscale", true),
@@ -1087,7 +1282,22 @@ pub fn apply(
             num(params, "strength", 100.0),
         ),
         // 滤镜。
-        "blur" => blur(input, num(params, "radius", 12.0)),
+        // GPU 优先：先走 GPU 渲染管线，设备不可用或跑挂时回落到下面的 CPU 实现。
+        "gpuGrade" => {
+            let exposure = num(params, "exposure", 0.0);
+            let contrast = num(params, "contrast", 1.0);
+            let saturation = num(params, "saturation", 1.0);
+            let brightness = 2f32.powf(exposure / 100.0);
+            crate::gpu::grade(input, brightness, contrast, saturation)
+                .unwrap_or_else(|| grade(input, exposure, 0.0, saturation, 0.0, 0.0, 0.0, 0.0))
+        }
+        "blur" => {
+            let radius = num(params, "radius", 12.0);
+            match crate::gpu::blur(input, radius.clamp(0.0, 100.0) / 100.0) {
+                Some(out) => out,
+                None => blur(input, radius),
+            }
+        }
         "sharpen" => sharpen(
             input,
             num(params, "strength", 50.0),

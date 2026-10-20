@@ -29,6 +29,7 @@ export const CATEGORY_SLUG: Record<NodeCategory, string> = {
   粒子: "particle",
   合成: "composite",
   摄像机: "camera",
+  GPU: "gpu",
   输出: "output",
 };
 

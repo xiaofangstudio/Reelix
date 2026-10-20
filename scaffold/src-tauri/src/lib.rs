@@ -23,6 +23,7 @@ pub mod state;
 pub mod storage;
 pub mod timeline;
 pub mod tracking;
+pub mod gpu;
 
 #[cfg(feature = "desktop")]
 use state::AppState;
@@ -41,6 +42,8 @@ pub fn run() {
             commands::project::save_project,
             commands::project::get_project,
             commands::project::get_project_path,
+            commands::project::adapt_sequence_to_asset,
+            commands::media::make_proxy,
             commands::project::close_project,
             // 系统文件对话框
             commands::dialog::pick_media_files,
@@ -52,6 +55,9 @@ pub fn run() {
             commands::media::relink_media,
             commands::media::remove_media,
             commands::media::generate_thumbnail,
+            commands::generators::new_generator,
+            commands::generators::default_media_dir,
+            commands::generators::list_default_media,
             // 音频：波形 / 录音 / 资源管理器定位
             commands::audio::extract_waveform,
             commands::audio::save_recording,
@@ -63,9 +69,21 @@ pub fn run() {
             commands::timeline::split_clip,
             commands::timeline::delete_clips,
             commands::timeline::set_clip_speed,
+            commands::timeline::set_clip_flags,
+            commands::timeline::unlink_compound,
             commands::timeline::add_track,
             commands::timeline::remove_track,
             commands::timeline::set_track_flags,
+            // 时间线：转场 / 音频淡入淡出 / 标记 / 素材箱
+            commands::timeline::set_transition,
+            commands::timeline::set_audio_fade,
+            commands::timeline::add_marker,
+            commands::timeline::remove_marker,
+            commands::timeline::move_marker,
+            commands::timeline::create_bin,
+            commands::timeline::rename_bin,
+            commands::timeline::remove_bin,
+            commands::timeline::set_asset_bin,
             // 字幕：本地离线识别 / 字幕轨 / 文字编辑
             commands::subtitle::asr_status,
             commands::subtitle::generate_subtitles,
@@ -108,6 +126,7 @@ pub fn run() {
             commands::export::resume_export,
             commands::export::list_export_presets,
             commands::export::export_capabilities,
+            commands::export::export_edl,
             // 历史与设置
             commands::history::undo,
             commands::history::redo,

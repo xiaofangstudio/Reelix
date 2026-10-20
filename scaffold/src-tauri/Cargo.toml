@@ -30,6 +30,8 @@ tauri = { version = "2", features = [], optional = true }
 tauri-plugin-dialog = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+wgpu = { version = "24", default-features = false, features = ["wgsl", "metal", "dx12", "naga-ir"] }
+pollster = "0.4"
 
 [features]
 # 桌面外壳：默认开。关掉它得到的是「只有纯逻辑、不含 tauri」的库。

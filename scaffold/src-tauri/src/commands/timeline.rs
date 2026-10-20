@@ -6,10 +6,10 @@
 use tauri::State;
 
 use crate::history::record;
-use crate::project::model::Project;
+use crate::project::model::{Bin, Marker, Project, Sequence};
 use crate::project::serialize::new_id;
 use crate::state::{lock, AppState};
-use crate::timeline::model::{Clip, Track, TrackKind};
+use crate::timeline::model::{Clip, Track, TrackKind, Transition};
 
 fn require_project<'a>(
     state: &'a State<'_, AppState>,
@@ -83,6 +83,11 @@ pub fn add_clip(
         enable_3d: false,
         transform_3d: None,
         text: None,
+        enabled: true,
+        label: None,
+        transition_in: None,
+        audio_fade_in_ms: None,
+        audio_fade_out_ms: None,
     };
 
     let track = find_track_mut(project, &track_id).ok_or_else(|| "找不到该轨道".to_string())?;
@@ -285,6 +290,55 @@ pub fn set_clip_speed(
     Ok(true)
 }
 
+/// 片段开关：启用 / 禁用、标签颜色（右键菜单与标签子菜单用）。
+/// 禁用的片段不参与预览与导出（渲染时跳过，见 render.rs 的 `c.enabled`）。
+#[tauri::command]
+pub fn set_clip_flags(
+    clip_id: String,
+    enabled: Option<bool>,
+    label: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let mut guard = require_project(&state)?;
+    let project = guard.as_mut().ok_or_else(|| "还没有打开项目".to_string())?;
+    let clip = find_clip_mut(project, &clip_id).ok_or_else(|| "找不到该片段".to_string())?;
+    if let Some(v) = enabled {
+        clip.enabled = v;
+    }
+    if let Some(l) = label {
+        clip.label = if l.is_empty() { None } else { Some(l) };
+    }
+    record(&state, "修改片段开关", project)?;
+    *lock(&state.project_dirty)? = true;
+    Ok(true)
+}
+
+/// 取消视音频链接：清除该片段所在链接组的 compound_id（PR 的 Unlink）。
+/// 点组内任意一段，整组分开——画面与声音从此各自独立。
+#[tauri::command]
+pub fn unlink_compound(clip_id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    let mut guard = require_project(&state)?;
+    let project = guard.as_mut().ok_or_else(|| "还没有打开项目".to_string())?;
+    let clip = find_clip_mut(project, &clip_id).ok_or_else(|| "找不到该片段".to_string())?;
+    let compound = match clip.compound_id.take() {
+        Some(id) => id,
+        None => return Ok(false), // 本来就没链接，安静返回
+    };
+    // 整组解除：所有共用这个 compound_id 的片段一起清掉
+    for sequence in &mut project.sequences {
+        for track in &mut sequence.tracks {
+            for c in &mut track.clips {
+                if c.compound_id.as_deref() == Some(compound.as_str()) {
+                    c.compound_id = None;
+                }
+            }
+        }
+    }
+    record(&state, "取消视音频链接", project)?;
+    *lock(&state.project_dirty)? = true;
+    Ok(true)
+}
+
 /// 加一条轨道（视频 / 音频 / 摄像机 / 字幕）。
 ///
 /// `sequence_id` 指定落在哪条序列上；不给就用第一条。
@@ -388,6 +442,250 @@ pub fn set_track_flags(
     }
 
     record(&state, "轨道开关", project)?;
+    *lock(&state.project_dirty)? = true;
+    Ok(true)
+}
+
+/// 找到指定序列（不给 id 时取第一条）。
+fn find_sequence_mut<'a>(project: &'a mut Project, sequence_id: Option<&str>) -> Option<&'a mut Sequence> {
+    match sequence_id {
+        Some(id) => project.sequences.iter_mut().find(|s| s.id == id),
+        None => project.sequences.first_mut(),
+    }
+}
+
+/// 设置片段的转场（入场叠化）。
+///
+/// `kind` 传 none/空串表示清除转场。可用的转场由合成器实现：
+/// `crossDissolve`（叠化）、`dipToBlack`（黑场过渡）、`dipToWhite`（白场过渡）。
+/// 转场时长不能超过片段自身时长，超出时按片段时长钳制。
+#[tauri::command]
+pub fn set_transition(
+    clip_id: String,
+    kind: Option<String>,
+    duration_ms: Option<f64>,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let mut guard = require_project(&state)?;
+    let project = guard.as_mut().ok_or_else(|| "还没有打开项目".to_string())?;
+
+    let clip = find_clip_mut(project, &clip_id).ok_or_else(|| "找不到该片段".to_string())?;
+
+    match kind.as_deref() {
+        None | Some("") | Some("none") => {
+            clip.transition_in = None;
+        }
+        Some(kind) => {
+            let kind = match kind {
+                "crossDissolve" | "dipToBlack" | "dipToWhite" | "fade" => {
+                    if kind == "fade" { "crossDissolve".to_string() } else { kind.to_string() }
+                }
+                other => return Err(format!("不支持的转场类型：{other}")),
+            };
+            let max = clip.duration_ms.max(1.0);
+            let duration = duration_ms.unwrap_or(500.0).clamp(1.0, max);
+            clip.transition_in = Some(Transition {
+                kind,
+                duration_ms: duration,
+            });
+        }
+    }
+
+    record(&state, "设置转场", project)?;
+    *lock(&state.project_dirty)? = true;
+    Ok(true)
+}
+
+/// 设置音频片段的淡入淡出时长（毫秒）。传 0 表示取消。
+#[tauri::command]
+pub fn set_audio_fade(
+    clip_id: String,
+    fade_in_ms: Option<f64>,
+    fade_out_ms: Option<f64>,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let mut guard = require_project(&state)?;
+    let project = guard.as_mut().ok_or_else(|| "还没有打开项目".to_string())?;
+
+    let clip = find_clip_mut(project, &clip_id).ok_or_else(|| "找不到该片段".to_string())?;
+    let max = clip.duration_ms.max(1.0);
+
+    if let Some(v) = fade_in_ms {
+        clip.audio_fade_in_ms = if v <= 0.0 { None } else { Some(v.clamp(1.0, max)) };
+    }
+    if let Some(v) = fade_out_ms {
+        clip.audio_fade_out_ms = if v <= 0.0 { None } else { Some(v.clamp(1.0, max)) };
+    }
+
+    record(&state, "设置音频淡入淡出", project)?;
+    *lock(&state.project_dirty)? = true;
+    Ok(true)
+}
+
+/// 在指定时刻加一个时间线标记，返回新标记。
+#[tauri::command]
+pub fn add_marker(
+    sequence_id: Option<String>,
+    time_ms: f64,
+    name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Marker, String> {
+    let mut guard = require_project(&state)?;
+    let project = guard.as_mut().ok_or_else(|| "还没有打开项目".to_string())?;
+    let sequence =
+        find_sequence_mut(project, sequence_id.as_deref()).ok_or_else(|| "找不到该序列".to_string())?;
+
+    let marker = Marker {
+        id: new_id("marker"),
+        time_ms: time_ms.max(0.0),
+        name,
+    };
+    sequence.markers.push(marker.clone());
+    sequence
+        .markers
+        .sort_by(|a, b| a.time_ms.partial_cmp(&b.time_ms).unwrap_or(std::cmp::Ordering::Equal));
+
+    record(&state, "添加标记", project)?;
+    *lock(&state.project_dirty)? = true;
+    Ok(marker)
+}
+
+/// 删除一个时间线标记。
+#[tauri::command]
+pub fn remove_marker(
+    sequence_id: Option<String>,
+    marker_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let mut guard = require_project(&state)?;
+    let project = guard.as_mut().ok_or_else(|| "还没有打开项目".to_string())?;
+    let sequence =
+        find_sequence_mut(project, sequence_id.as_deref()).ok_or_else(|| "找不到该序列".to_string())?;
+
+    let before = sequence.markers.len();
+    sequence.markers.retain(|m| m.id != marker_id);
+    if sequence.markers.len() == before {
+        return Err("找不到该标记".to_string());
+    }
+
+    record(&state, "删除标记", project)?;
+    *lock(&state.project_dirty)? = true;
+    Ok(true)
+}
+
+/// 移动标记到新的时刻。
+#[tauri::command]
+pub fn move_marker(
+    sequence_id: Option<String>,
+    marker_id: String,
+    time_ms: f64,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let mut guard = require_project(&state)?;
+    let project = guard.as_mut().ok_or_else(|| "还没有打开项目".to_string())?;
+    let sequence =
+        find_sequence_mut(project, sequence_id.as_deref()).ok_or_else(|| "找不到该序列".to_string())?;
+
+    let marker = sequence
+        .markers
+        .iter_mut()
+        .find(|m| m.id == marker_id)
+        .ok_or_else(|| "找不到该标记".to_string())?;
+    marker.time_ms = time_ms.max(0.0);
+    sequence
+        .markers
+        .sort_by(|a, b| a.time_ms.partial_cmp(&b.time_ms).unwrap_or(std::cmp::Ordering::Equal));
+
+    record(&state, "移动标记", project)?;
+    *lock(&state.project_dirty)? = true;
+    Ok(true)
+}
+
+/// 新建素材箱文件夹。
+#[tauri::command]
+pub fn create_bin(name: String, state: State<'_, AppState>) -> Result<Bin, String> {
+    let mut guard = require_project(&state)?;
+    let project = guard.as_mut().ok_or_else(|| "还没有打开项目".to_string())?;
+
+    let trimmed = name.trim();
+    let bin = Bin {
+        id: new_id("bin"),
+        name: if trimmed.is_empty() { "新建素材箱".to_string() } else { trimmed.to_string() },
+    };
+    project.bins.push(bin.clone());
+
+    record(&state, "新建素材箱", project)?;
+    *lock(&state.project_dirty)? = true;
+    Ok(bin)
+}
+
+/// 重命名素材箱文件夹。
+#[tauri::command]
+pub fn rename_bin(bin_id: String, name: String, state: State<'_, AppState>) -> Result<bool, String> {
+    let mut guard = require_project(&state)?;
+    let project = guard.as_mut().ok_or_else(|| "还没有打开项目".to_string())?;
+
+    let bin = project
+        .bins
+        .iter_mut()
+        .find(|b| b.id == bin_id)
+        .ok_or_else(|| "找不到该素材箱".to_string())?;
+    let trimmed = name.trim();
+    if !trimmed.is_empty() {
+        bin.name = trimmed.to_string();
+    }
+
+    record(&state, "重命名素材箱", project)?;
+    *lock(&state.project_dirty)? = true;
+    Ok(true)
+}
+
+/// 删除素材箱文件夹；箱内素材回到「全部」，素材本身不删。
+#[tauri::command]
+pub fn remove_bin(bin_id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    let mut guard = require_project(&state)?;
+    let project = guard.as_mut().ok_or_else(|| "还没有打开项目".to_string())?;
+
+    let before = project.bins.len();
+    project.bins.retain(|b| b.id != bin_id);
+    if project.bins.len() == before {
+        return Err("找不到该素材箱".to_string());
+    }
+    for asset in project.assets.iter_mut() {
+        if asset.bin_id.as_deref() == Some(bin_id.as_str()) {
+            asset.bin_id = None;
+        }
+    }
+
+    record(&state, "删除素材箱", project)?;
+    *lock(&state.project_dirty)? = true;
+    Ok(true)
+}
+
+/// 把素材归入文件夹；`bin_id` 传 None 表示移出（回到「全部」）。
+#[tauri::command]
+pub fn set_asset_bin(
+    asset_id: String,
+    bin_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let mut guard = require_project(&state)?;
+    let project = guard.as_mut().ok_or_else(|| "还没有打开项目".to_string())?;
+
+    if let Some(id) = bin_id.as_deref() {
+        if !project.bins.iter().any(|b| b.id == id) {
+            return Err("找不到该素材箱".to_string());
+        }
+    }
+
+    let asset = project
+        .assets
+        .iter_mut()
+        .find(|a| a.id == asset_id)
+        .ok_or_else(|| "找不到该素材".to_string())?;
+    asset.bin_id = bin_id;
+
+    record(&state, "移动素材到素材箱", project)?;
     *lock(&state.project_dirty)? = true;
     Ok(true)
 }

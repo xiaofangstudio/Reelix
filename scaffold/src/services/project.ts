@@ -51,3 +51,8 @@ export function getProjectPath(): Promise<string | null> {
 export function closeProject(): Promise<boolean> {
   return invoke<boolean>("close_project");
 }
+
+/** 让序列画幅与帧率自动适配某个素材（导入首个视频时，剪映习惯） */
+export function adaptSequenceToAsset(sequenceId: string, assetId: string): Promise<Project> {
+  return invoke<Project>("adapt_sequence_to_asset", { sequenceId, assetId });
+}

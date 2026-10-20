@@ -31,6 +31,26 @@ import { findEffect as findEffectSpec } from "../core/effectCatalog";
 export type DeckTab = "timeline" | "curves";
 export type ThemeMode = "dark" | "light";
 
+/** 工具栏工具（照 FC 参考 的工具条，先做会真实作用的几个） */
+/**
+ * 时间线工具（对齐 FC 参考 的 17 个工具的核心子集）。
+ * 每个工具在时间线上有真实行为：见 TimelineView 的 onClipPointerDown / onPointerMove。
+ */
+export type ToolKind =
+  | "selection"
+  | "trackSelectForward"
+  | "trackSelectBackward"
+  | "rippleEdit"
+  | "rolling"
+  | "rateStretch"
+  | "razor"
+  | "slip"
+  | "slide"
+  | "pen"
+  | "hand"
+  | "zoom"
+  | "text";
+
 /** 编辑器内的大页面：素材 / 剪辑 / 特效 / 导出，达芬奇式四页 */
 export type PageTab = "media" | "edit" | "fx" | "deliver";
 
@@ -51,7 +71,14 @@ export interface ExportJobState {
   finishedAt: number | null;
 }
 
-/** 空任务常量，避免每次选择器返回新对象导致重渲染 */
+/** 渲染队列项：一个排队的序列（AE 式串行渲染） */
+export interface RenderQueueItem {
+  id: Id;
+  sequenceId: Id;
+  name: string;
+  status: "queued" | "done" | "failed";
+}
+
 const IDLE_EXPORT_JOB: ExportJobState = {
   jobId: null,
   status: "idle",
@@ -127,6 +154,15 @@ interface AppState {
    * 选中内部节点时，如果是片段节点，selectedClipId 会被同步设为对应片段。
    */
   selectedClipId: Id | null;
+  /** 选中片段所属素材 id（右键「编辑原始素材」/「在项目面板中显示」用） */
+  selectedClipAssetId: Id | null;
+  /** 选中片段的视音频链接组 id（右键「取消链接」用） */
+  selectedClipCompoundId: Id | null;
+  /** 内部剪辑剪贴板（剪切/复制/粘贴片段，PR 式） */
+  clipClipboard: Clip[];
+  cutClips: () => void;
+  copyClips: () => void;
+  pasteClips: () => Promise<boolean>;
   /** 时间线上的多选集合。框选与 Shift 加选都写这里，末位是「主选中」 */
   selectedClipIds: Id[];
   selectedNodeId: Id | null;
@@ -156,6 +192,15 @@ interface AppState {
   setDeckTab: (tab: DeckTab) => void;
   /** 切换大页面（素材 / 剪辑 / 特效 / 导出） */
   setPage: (page: PageTab) => void;
+  /**
+   * 特效工作区「窗口」菜单：请求打开/聚焦某个面板。
+   * seq 每次自增，重复点同一个面板也能让工作区再响应一次。
+   */
+  fxPanelRequest: { id: string; seq: number } | null;
+  openFxPanel: (id: string) => void;
+  /** 特效工作区「窗口 ▸ 工作区」：请求套用某个预设布局 */
+  fxWorkspaceRequest: { name: string; seq: number } | null;
+  applyFxWorkspace: (name: string) => void;
   /** 打开开场界面——新建工程时在这儿挑画幅 / 帧率 / 色彩空间 */
   showStartScreen: () => void;
   /** 收起开场界面，回到编辑器 */
@@ -177,12 +222,46 @@ interface AppState {
   /** 复位到空闲态，以便再次导出 */
   resetExportJob: () => void;
 
+  /** 渲染队列（AE 式）：串行渲染多个序列 */
+  renderQueue: RenderQueueItem[];
+  enqueueRender: (sequenceId: Id, name: string) => void;
+  dequeueRender: (itemId: Id) => void;
+  moveRenderItem: (itemId: Id, dir: "up" | "down") => void;
+  runRenderQueue: () => Promise<void>;
+
   /** 旁路：数据直通但效果保留 */
   toggleBypass: (nodeId: Id) => void;
   setNodeParam: (nodeId: Id, key: string, value: number | string | boolean) => void;
 
   /** 片段右键勾选「启用 3D」：开时补一份默认变换，关时清空（docs/09 第 2.3 节） */
   setClip3DEnabled: (clipId: Id, enabled: boolean) => void;
+  /** 工具栏当前工具（FC 参考 工具条：选择/波纹/剃刀/错动/钢笔/抓手/文字） */
+  tool: ToolKind;
+  setTool: (tool: ToolKind) => void;
+  /** 沉浸模式：正在 3D 空间里操作的片段 id（null = 关闭） */
+  immersiveClipId: Id | null;
+  setImmersiveClipId: (id: Id | null) => void;
+  fxCanvasTool: "selection" | "hand" | "zoom";
+  setFxCanvasTool: (tool: "selection" | "hand" | "zoom") => void;
+  /** 时间线缩放倍率（px/ms）：菜单、快捷键、Ctrl+滚轮共用一份 */
+  zoomLevel: number;
+  setZoomLevel: (level: number) => void;
+  /** 素材箱当前选中项（菜单「连接媒体」用） */
+  pickedAssetId: Id | null;
+  /** 正在从素材库往时间线拖的素材（Pointer Events 全局拖拽，绕开 HTML5 DnD 在 WebView2 的不确定性） */
+  draggingAssetId: Id | null;
+  setDraggingAsset: (id: Id | null) => void;
+  setPickedAsset: (assetId: Id | null) => void;
+  /** 直接切主题（菜单用） */
+  setTheme: (mode: ThemeMode) => void;
+  /** 回到开场欢迎页（文件 ▸ 新建项目） */
+  resetToStartScreen: () => void;
+  /** 全选时间线上的所有片段 */
+  selectAllClips: () => void;
+  /** 选中片段切换 3D 开关（图层菜单） */
+  toggle3dOnSelected: () => void;
+  /** 清掉选中片段的全部效果（编辑 ▸ 移除属性） */
+  clearClipEffects: () => void;
   /** 修改片段的 3D 变换属性 */
   setClipTransform3D: (clipId: Id, patch: Transform3DPatch) => void;
 
@@ -224,7 +303,7 @@ interface AppState {
   updateEffectKeyframes: (updates: Array<{ id: Id; timeMs: number; value: number }>) => void;
   setSelectedKeyframeIds: (ids: Id[]) => void;
   /**
-   * 关键帧导航器（AE / PR 的 ◀ ◆ ▶，蒸馏自 FilmCraft `keyframe_nav`）：
+   * 关键帧导航器（AE / PR 的 ◀ ◆ ▶，蒸馏自 FC 参考 `keyframe_nav`）：
    * -1 跳上一个关键帧、+1 跳下一个、0 在播放头处增删关键帧。
    * 播放头落到关键帧时刻并顺带选中它，返回是否动过。
    */
@@ -389,6 +468,9 @@ export function isClipNodeBypassed(project: Project, clip: Clip): boolean {
   return false;
 }
 
+/** 消息弹窗的自动消失计时器（3 秒沉下，连续 push 重置） */
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+
 export const useAppStore = create<AppState>((set, get) => ({
   // 未打开工程就是 null，界面据此显示「新建 / 打开」引导，不拿假数据充数。
   project: null,
@@ -406,8 +488,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   previewAssetId: null,
   curveExpandedClipId: null,
   exportJob: IDLE_EXPORT_JOB,
+  renderQueue: [],
+  fxPanelRequest: null,
+  fxWorkspaceRequest: null,
   selectedClipId: null,
   selectedClipIds: [],
+  selectedClipAssetId: null,
+  selectedClipCompoundId: null,
+  clipClipboard: [],
   selectedNodeId: null,
   effects: {},
   selectedEffectId: null,
@@ -424,6 +512,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       previewAssetId: null,
       curveExpandedClipId: null,
       exportJob: IDLE_EXPORT_JOB,
+  renderQueue: [],
+      fxPanelRequest: null,
       selectedClipId: null,
       selectedClipIds: [],
       selectedNodeId: null,
@@ -447,6 +537,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       previewAssetId: null,
       curveExpandedClipId: null,
       exportJob: IDLE_EXPORT_JOB,
+  renderQueue: [],
       selectedClipId: null,
       selectedClipIds: [],
       selectedNodeId: null,
@@ -465,6 +556,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     // 效果栈随片段切换，清掉上一个片段遗留的效果选中与框选
     set({
       selectedClipId: clipId,
+      selectedClipAssetId: clip.assetId,
+      selectedClipCompoundId: clip.compoundId ?? null,
       selectedClipIds: [clipId],
       selectedNodeId: clip.nodeId,
       selectedEffectId: null,
@@ -534,12 +627,30 @@ export const useAppStore = create<AppState>((set, get) => ({
   pause: () => set({ playing: false, playbackRate: 1 }),
   setDeckTab: (tab) => set({ deckTab: tab }),
   setPage: (page) => set({ page }),
+  openFxPanel: (id) =>
+    set((s) => ({
+      page: "fx",
+      fxPanelRequest: { id, seq: (s.fxPanelRequest?.seq ?? 0) + 1 },
+    })),
+  applyFxWorkspace: (name) =>
+    set((s) => ({
+      page: "fx",
+      fxWorkspaceRequest: { name, seq: (s.fxWorkspaceRequest?.seq ?? 0) + 1 },
+    })),
   showStartScreen: () => set({ startScreen: true }),
   hideStartScreen: () => set({ startScreen: false }),
   toggleTheme: () => set({ theme: get().theme === "dark" ? "light" : "dark" }),
 
-  pushNotice: (kind, text) => set({ notice: { kind, text } }),
-  dismissNotice: () => set({ notice: null }),
+  pushNotice: (kind, text) => {
+    set({ notice: { kind, text } });
+    // 3 秒后自动沉下（用户要求：不用手动点掉；连续 push 会重置计时）
+    if (noticeTimer) clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => set({ notice: null }), 3000);
+  },
+  dismissNotice: () => {
+    if (noticeTimer) clearTimeout(noticeTimer);
+    set({ notice: null });
+  },
 
   setPreviewAsset: (assetId) => set({ previewAssetId: assetId }),
 
@@ -606,6 +717,91 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   resetExportJob: () => set({ exportJob: IDLE_EXPORT_JOB }),
 
+  // ---- 渲染队列（串行真渲染，AE 式） ----
+  enqueueRender: (sequenceId, name) =>
+    set((state) => ({
+      renderQueue: [
+        ...state.renderQueue,
+        {
+          id: `rq-${Date.now().toString(36)}-${Math.round(Math.random() * 1e6).toString(36)}`,
+          sequenceId,
+          name,
+          status: "queued",
+        },
+      ],
+    })),
+
+  dequeueRender: (itemId) =>
+    set((state) => ({
+      renderQueue: state.renderQueue.filter((q) => q.id !== itemId),
+    })),
+
+  moveRenderItem: (itemId, dir) =>
+    set((state) => {
+      const idx = state.renderQueue.findIndex((q) => q.id === itemId);
+      if (idx < 0) return {};
+      const swap = dir === "up" ? idx - 1 : idx + 1;
+      if (swap < 0 || swap >= state.renderQueue.length) return {};
+      const queue = [...state.renderQueue];
+      [queue[idx], queue[swap]] = [queue[swap], queue[idx]];
+      return { renderQueue: queue };
+    }),
+
+  runRenderQueue: async () => {
+    const run = async () => {
+      // 取当前队列；串行：队列空了或当前没有排队项就停
+      for (;;) {
+        const st = useAppStore.getState();
+        const item = st.renderQueue.find((q) => q.status === "queued");
+        if (!item || !st.project) break;
+        try {
+          const exportMod = await import("../services/export");
+          const dialogMod = await import("../services/dialog");
+          const seq = st.project.sequences.find((s) => s.id === item.sequenceId);
+          if (!seq) throw new Error("序列不存在");
+          const list = (await exportMod.listExportPresets()) as Array<{ id: string; available?: boolean; container: string; name: string }>;
+          const first = list.find((x) => x.available) ?? list[0];
+          const saved = await dialogMod.pickSavePath(`${item.name || "render"}.${first.container}`);
+          if (!saved) break; // 用户取消保存框：整个队列停
+          const { jobId } = await exportMod.startExport(item.sequenceId, first.id, saved, {
+            startMs: 0,
+            endMs: seq.durationMs,
+          });
+          useAppStore.getState().beginExportJob(jobId, saved);
+          // 等这个任务终态（轮询 store 的 exportJob）
+          for (;;) {
+            await new Promise((r) => setTimeout(r, 400));
+            const job = useAppStore.getState().exportJob;
+            if (job.status === "done" || job.status === "failed" || job.status === "cancelled") {
+              break;
+            }
+          }
+          const job = useAppStore.getState().exportJob;
+          useAppStore.setState((s) => ({
+            renderQueue: s.renderQueue.map((q) =>
+              q.id === item.id
+                ? { ...q, status: job.status === "done" ? "done" : "failed" }
+                : q
+            ),
+          }));
+          useAppStore.getState().resetExportJob();
+          if (job.status !== "done") break; // 失败即停，不继续烧队列
+        } catch (err) {
+          useAppStore.setState((s) => ({
+            renderQueue: s.renderQueue.map((q) =>
+              q.id === item.id ? { ...q, status: "failed" } : q
+            ),
+          }));
+          useAppStore
+            .getState()
+            .pushNotice("error", `「${item.name}」渲染失败，队列已停止`);
+          break;
+        }
+      }
+    };
+    await run();
+  },
+
   toggleBypass: (nodeId) =>
     set((state) => {
       if (!state.project) return {};
@@ -654,6 +850,123 @@ export const useAppStore = create<AppState>((set, get) => ({
             transform3D: clip.transform3D ?? { ...DEFAULT_TRANSFORM_3D },
           };
         }),
+      };
+    }),
+
+  tool: "trackSelectForward",
+  setTool: (tool) => set({ tool }),
+  immersiveClipId: null,
+  setImmersiveClipId: (id) => set({ immersiveClipId: id }),
+  fxCanvasTool: "selection",
+  setFxCanvasTool: (tool) => set({ fxCanvasTool: tool }),
+
+  /** 剪切：选中片段存进内部剪贴板并删掉原件（PR 式 Cut） */
+  cutClips: () => {
+    const state = get();
+    if (!state.project || state.selectedClipIds.length === 0) return;
+    const picked: Clip[] = [];
+    for (const seq of state.project.sequences) {
+      for (const track of seq.tracks) {
+        for (const clip of track.clips) {
+          if (state.selectedClipIds.includes(clip.id)) picked.push({ ...clip });
+        }
+      }
+    }
+    if (picked.length === 0) return;
+    set({ clipClipboard: picked });
+    void import("./projectActions").then((m) => m.deleteSelectedClips());
+  },
+
+  /** 复制：选中片段存进内部剪贴板，原件不动（PR 式 Copy） */
+  copyClips: () => {
+    const state = get();
+    if (!state.project || state.selectedClipIds.length === 0) return;
+    const picked: Clip[] = [];
+    for (const seq of state.project.sequences) {
+      for (const track of seq.tracks) {
+        for (const clip of track.clips) {
+          if (state.selectedClipIds.includes(clip.id)) picked.push({ ...clip });
+        }
+      }
+    }
+    if (picked.length > 0) {
+      set({ clipClipboard: picked });
+      get().pushNotice("info", `已复制 ${picked.length} 个片段`);
+    }
+  },
+
+  /** 粘贴：剪贴板片段按原相对位置落到播放头处（同轨优先，音频找音频轨） */
+  pasteClips: async () => {
+    const state = get();
+    if (!state.project || state.clipClipboard.length === 0) return false;
+    const { placeAssetAt } = await import("./projectActions");
+    const base = Math.min(...state.clipClipboard.map((c) => c.startMs));
+    const at = Math.max(base, state.playheadMs);
+    let ok = false;
+    for (const clip of state.clipClipboard) {
+      const track = state.project.sequences
+        .flatMap((s) => s.tracks)
+        .find((t) => t.id === clip.trackId && !t.locked);
+      const target =
+        track ??
+        state.project.sequences
+          .flatMap((s) => s.tracks)
+          .find((t) => !t.locked);
+      if (!target) break;
+      const startMs = at + (clip.startMs - base);
+      const placed = await placeAssetAt(clip.assetId, target.id, startMs);
+      ok = ok || placed;
+    }
+    return ok;
+  },
+
+  zoomLevel: 0.1,
+  setZoomLevel: (level) => set({ zoomLevel: Math.min(8, Math.max(0.02, level)) }),
+
+  pickedAssetId: null,
+  draggingAssetId: null,
+  setDraggingAsset: (id) => set({ draggingAssetId: id }),
+  setPickedAsset: (assetId) => set({ pickedAssetId: assetId }),
+
+  setTheme: (mode) => set({ theme: mode }),
+
+  resetToStartScreen: () => set({ startScreen: true, curveExpandedClipId: null }),
+
+  selectAllClips: () =>
+    set((state) => {
+      if (!state.project) return {};
+      const ids: Id[] = [];
+      for (const seq of state.project.sequences) {
+        for (const track of seq.tracks) {
+          for (const clip of track.clips) ids.push(clip.id);
+        }
+      }
+      return { selectedClipIds: ids, selectedClipId: ids[0] ?? null };
+    }),
+
+  toggle3dOnSelected: () =>
+    set((state) => {
+      const id = state.selectedClipId;
+      if (!id || !state.project) return {};
+      return {
+        project: mapClip(state.project, id, (c) => ({
+          ...c,
+          enable3D: !c.enable3D,
+          transform3D: c.enable3D ? undefined : c.transform3D ?? { ...DEFAULT_TRANSFORM_3D },
+        })),
+      };
+    }),
+
+  clearClipEffects: () =>
+    set((state) => {
+      const id = state.selectedClipId;
+      if (!id) return {};
+      const effectIds = new Set((state.effects[id] ?? []).map((e) => e.id));
+      return {
+        effects: { ...state.effects, [id]: [] },
+        selectedEffectId: null,
+        // 片段的效果都没了，它身上的关键帧也一并清掉
+        effectKeyframes: state.effectKeyframes.filter((k) => !effectIds.has(k.effectId)),
       };
     }),
 

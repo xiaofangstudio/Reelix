@@ -237,6 +237,23 @@ pub fn node_catalog() -> Vec<NodeTypeInfo> {
             ],
         ),
         // ---- 滤镜 ----
+        // ---- GPU 加速滤镜（真走 GPU 渲染管线，设备不可用时自动回落 CPU） ----
+        filter_node(
+            "gpuGrade",
+            "GPU 调色",
+            "GPU",
+            &[
+                ("exposure", ParamValue::Number(0.0)),
+                ("contrast", ParamValue::Number(1.0)),
+                ("saturation", ParamValue::Number(1.0)),
+            ],
+        ),
+        filter_node(
+            "gpuLut",
+            "GPU LUT",
+            "GPU",
+            &[("file", ParamValue::from(""))],
+        ),
         filter_node(
             "blur",
             "模糊",
@@ -376,7 +393,9 @@ pub fn node_catalog() -> Vec<NodeTypeInfo> {
         ),
         filter_node(
             "maskTrack",
-            "蒙版跟踪",
+            // 诚实命名：内核目前与形状遮罩相同（真跟踪解算未接入），
+            // 不冒充跟踪功能（零假功能铁律）
+            "蒙版（跟踪待接入）",
             "蒙版",
             &[
                 ("shape", ParamValue::from("track")),

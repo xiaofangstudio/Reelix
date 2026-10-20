@@ -15,8 +15,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::render;
 use crate::commands::subtitle;
+use crate::commands::project::require_project;
 use crate::compositor::decode;
-use crate::graph::Frame;
 use crate::keyframe::KeyframeStore;
 use crate::media::audio::{decode_segment_stereo, MIX_SAMPLE_RATE};
 use crate::project::model::{Project, Sequence};
@@ -68,6 +68,85 @@ pub struct ExportProgress {
     pub stage: String,
 }
 
+/// 毫秒 → CMX3600 时间码（HH:MM:SS:FF，非丢帧）。
+fn edl_tc(ms: f64, fps: f64) -> String {
+    let total_frames = (ms / 1000.0 * fps).round() as u64;
+    let f = total_frames % fps as u64;
+    let total_secs = total_frames / fps as u64;
+    format!(
+        "{:02}:{:02}:{:02}:{:02}",
+        total_secs / 3600,
+        (total_secs % 3600) / 60,
+        total_secs % 60,
+        f
+    )
+}
+
+/// 导出 EDL（CMX3600）：把视频轨的每个片段写成一条剪辑记录，
+/// 给达芬奇 / PR / EE 等软件对剪用。这是真交换格式，不是摆设。
+#[tauri::command]
+pub fn export_edl(
+    sequence_id: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    let project = require_project(&state)?;
+    let seq = project
+        .sequences
+        .iter()
+        .find(|s| s.id == sequence_id)
+        .ok_or_else(|| "找不到序列".to_string())?;
+    let fps = if seq.frame_rate >= 1.0 { seq.frame_rate } else { 25.0 };
+    let width = seq.width;
+    let height = seq.height;
+
+    // 按轨道从高到低（顶层优先），只取视频轨；每个 clip 一条记录
+    let mut tracks: Vec<_> = seq
+        .tracks
+        .iter()
+        .filter(|t| t.kind == TrackKind::Video)
+        .collect();
+    tracks.sort_by_key(|t| std::cmp::Reverse(t.index));
+
+    let mut out = String::new();
+    out.push_str(&format!("TITLE: {} \n", seq.name));
+    out.push_str("FCM: NON-DROP FRAME\n\n");
+    let mut record_in = 0.0f64;
+    let mut event_no = 1usize;
+    for track in &tracks {
+        for clip in &track.clips {
+            let reel: String = clip
+                .asset_id
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .take(8)
+                .collect::<String>()
+                .to_uppercase();
+            let reel = if reel.is_empty() { "AX".to_string() } else { reel };
+            let src_in = clip.in_ms / clip.speed.max(0.01);
+            let src_out = clip.out_ms / clip.speed.max(0.01);
+            let rec_out = record_in + clip.duration_ms;
+            out.push_str(&format!(
+                "{:03}  {:<8} {:<3} {:<2}  {} {} {}\n",
+                event_no,
+                reel,
+                "V",
+                "C",
+                edl_tc(src_in, fps),
+                edl_tc(src_out, fps),
+                edl_tc(record_in, fps),
+            ));
+            out.push_str(&format!("* FROM CLIP NAME: {}\n", clip.id));
+            out.push_str(&format!("* RES: {}x{}\n\n", width, height));
+            record_in = rec_out;
+            event_no += 1;
+        }
+    }
+
+    std::fs::write(&path, out).map_err(|e| format!("写 EDL 失败：{e}"))?;
+    Ok(event_no - 1)
+}
+
 /// 内置导出预设：够用就好，全部中文名。
 pub fn export_presets() -> Vec<ExportPreset> {
     vec![
@@ -112,7 +191,7 @@ pub fn export_presets() -> Vec<ExportPreset> {
 
 /// 给子进程加 CREATE_NO_WINDOW，导出时绝不弹黑窗。
 #[cfg(windows)]
-fn no_window(command: &mut Command) {
+pub fn no_window(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     command.creation_flags(CREATE_NO_WINDOW);
@@ -505,22 +584,14 @@ fn run_export(
                 }
             }
         };
-        let frame = match &plan.source {
-            Some((asset, local_ms)) => {
-                decode::decode_frame(Path::new(asset), *local_ms, plan.width, plan.height)
-            }
-            None => Ok(Frame::new(plan.width, plan.height)),
-        };
-        let mut frame = match frame {
+        // 与预览共用同一条渲染路径：解码 → 效果栈 → 入场转场混合。
+        let frame = match render::render_plan(&plan) {
             Ok(f) => f,
             Err(e) => {
                 failure = Some(e);
                 break;
             }
         };
-        if !plan.order.is_empty() {
-            frame = render::composite(&plan.graph, &plan.order, frame);
-        }
         let rgba = render::frame_to_rgba8(&frame);
         if stdin.write_all(&rgba).is_err() {
             failure = Some("编码器提前退出，无法继续写入画面".to_string());
@@ -606,6 +677,32 @@ impl Drop for TempFile {
     }
 }
 
+/// 片段内某一时刻的音频增益（0～1）。
+///
+/// `local_ms` 是片段内的时间线偏移，`duration_ms` 是片段在时间线上的时长。
+/// `fade_in_ms` / `fade_out_ms` 为 `None` 或不大于 0 时视为无淡变；
+/// 淡入与淡出区间重叠时两段增益相乘，最后夹到 0～1。
+fn clip_audio_gain(
+    local_ms: f64,
+    duration_ms: f64,
+    fade_in_ms: Option<f64>,
+    fade_out_ms: Option<f64>,
+) -> f32 {
+    let mut gain = 1.0f64;
+    if let Some(fi) = fade_in_ms.filter(|v| *v > 0.0) {
+        if local_ms < fi {
+            gain *= (local_ms / fi).max(0.0);
+        }
+    }
+    if let Some(fo) = fade_out_ms.filter(|v| *v > 0.0) {
+        let remaining = duration_ms - local_ms;
+        if remaining < fo {
+            gain *= (remaining / fo).max(0.0);
+        }
+    }
+    gain.clamp(0.0, 1.0) as f32
+}
+
 /// 把范围内所有带音轨的片段混成一条立体声 PCM，落临时文件。
 ///
 /// 覆盖范围只算片段与导出区间的交集；交叠的片段直接叠相加（上限 1.0 交给
@@ -661,8 +758,20 @@ fn mix_audio(
             if avail == 0 {
                 continue;
             }
-            for (i, sample) in pcm[..avail].iter().enumerate() {
-                mix[offset + i] += *sample;
+            // 按立体声帧算片段内偏移：淡入淡出只与时间线位置有关，
+            // 与解码速度无关，所以直接用交叠起点减去片段起点。
+            let segment_start_local = from - clip.start_ms;
+            for (frame, pair) in pcm[..avail].chunks_exact(2).enumerate() {
+                let local_ms =
+                    segment_start_local + frame as f64 * 1000.0 / MIX_SAMPLE_RATE as f64;
+                let gain = clip_audio_gain(
+                    local_ms,
+                    clip.duration_ms,
+                    clip.audio_fade_in_ms,
+                    clip.audio_fade_out_ms,
+                );
+                mix[offset + frame * 2] += pair[0] * gain;
+                mix[offset + frame * 2 + 1] += pair[1] * gain;
             }
             any = true;
         }
@@ -770,5 +879,48 @@ mod tests {
         let (w, h) = export_size(&seq, 1920, 1080);
         assert_eq!(w % 2, 0);
         assert_eq!(h % 2, 0);
+    }
+
+    /// 没有淡变设置时增益恒为 1。
+    #[test]
+    fn audio_gain_is_unity_without_fades() {
+        assert_eq!(clip_audio_gain(0.0, 1000.0, None, None), 1.0);
+        assert_eq!(clip_audio_gain(500.0, 1000.0, None, None), 1.0);
+        assert_eq!(clip_audio_gain(1000.0, 1000.0, None, None), 1.0);
+    }
+
+    /// 淡入：片段内偏移走到淡入时长一半时，增益是一半。
+    #[test]
+    fn audio_gain_ramps_up_during_fade_in() {
+        assert_eq!(clip_audio_gain(0.0, 1000.0, Some(400.0), None), 0.0);
+        assert_eq!(clip_audio_gain(200.0, 1000.0, Some(400.0), None), 0.5);
+        assert_eq!(clip_audio_gain(400.0, 1000.0, Some(400.0), None), 1.0);
+        assert_eq!(clip_audio_gain(800.0, 1000.0, Some(400.0), None), 1.0);
+    }
+
+    /// 淡出：距离片段结束还剩淡出时长一半时，增益是一半。
+    #[test]
+    fn audio_gain_ramps_down_during_fade_out() {
+        assert_eq!(clip_audio_gain(0.0, 1000.0, None, Some(400.0)), 1.0);
+        assert_eq!(clip_audio_gain(600.0, 1000.0, None, Some(400.0)), 1.0);
+        assert_eq!(clip_audio_gain(800.0, 1000.0, None, Some(400.0)), 0.5);
+        assert_eq!(clip_audio_gain(1000.0, 1000.0, None, Some(400.0)), 0.0);
+    }
+
+    /// 淡入淡出时长不大于 0 时视为没有设置。
+    #[test]
+    fn audio_gain_ignores_non_positive_fades() {
+        assert_eq!(clip_audio_gain(10.0, 1000.0, Some(0.0), Some(-5.0)), 1.0);
+    }
+
+    /// 淡入与淡出重叠时两段增益相乘，并且始终夹在 0～1。
+    #[test]
+    fn audio_gain_multiplies_overlapping_fades() {
+        let gain = clip_audio_gain(500.0, 1000.0, Some(1000.0), Some(1000.0));
+        assert!((gain - 0.25).abs() < 1e-6, "重叠中点应为 0.5 × 0.5");
+
+        // 片段外（负偏移 / 超出结尾）也不能算出负增益。
+        assert_eq!(clip_audio_gain(-100.0, 1000.0, Some(400.0), None), 0.0);
+        assert_eq!(clip_audio_gain(2000.0, 1000.0, None, Some(400.0)), 0.0);
     }
 }

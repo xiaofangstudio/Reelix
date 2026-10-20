@@ -86,138 +86,194 @@ export function StartScreen() {
 
   return (
     <div className="start-screen">
-      <div className="start-card">
-        <div className="start-brand">
-          Reelix<span className="dot">.</span>
-        </div>
-        <p className="start-tagline">特效合成与合成预览，先定画幅，再开工程。</p>
-
-        <label className="start-field">
-          <span className="start-label">工程名</span>
-          <input
-            className="start-input"
-            type="text"
-            value={name}
-            maxLength={80}
-            placeholder={DEFAULT_NAME}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
-
-        <label className="start-field">
-          <span className="start-label">分辨率</span>
-          <select
-            className="start-select"
-            value={preset}
-            onChange={(e) => setPreset(e.target.value)}
-          >
-            {RESOLUTIONS.map((r) => (
-              <option key={presetKey(r.width, r.height)} value={presetKey(r.width, r.height)}>
-                {r.label}
-              </option>
-            ))}
-            <option value={CUSTOM}>自定义…</option>
-          </select>
-        </label>
-
-        {preset === CUSTOM && (
-          <div className="start-field start-field-custom">
-            <span className="start-label">画幅（像素）</span>
-            <div className="start-custom-row">
-              <input
-                className="start-input start-input-num"
-                type="number"
-                min={1}
-                max={16384}
-                value={customWidth}
-                onChange={(e) => setCustomWidth(Number(e.target.value))}
-              />
-              <span className="start-times">×</span>
-              <input
-                className="start-input start-input-num"
-                type="number"
-                min={1}
-                max={16384}
-                value={customHeight}
-                onChange={(e) => setCustomHeight(Number(e.target.value))}
-              />
+      <div className="start-welcome">
+        {/* 左上：三个主入口（EC 参考 欢迎页的排法） */}
+        <div className="start-hero">
+          <div className="start-hero-text">
+            <div className="start-brand">
+              欢迎使用 Reelix<span className="dot">.</span>
             </div>
+            <p className="start-tagline">特效合成软件 —— 图层 + 效果栈，从合成到交付。</p>
           </div>
-        )}
-
-        <div className="start-grid">
-          <label className="start-field">
-            <span className="start-label">帧率</span>
-            <select
-              className="start-select"
-              value={String(frameRate)}
-              onChange={(e) => setFrameRate(Number(e.target.value))}
-            >
-              {FRAME_RATES.map((fps) => (
-                <option key={fps} value={String(fps)}>
-                  {fps} fps
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="start-field">
-            <span className="start-label">色彩空间</span>
-            <select
-              className="start-select"
-              value={colorSpace}
-              onChange={(e) => setColorSpace(e.target.value)}
-            >
-              {COLOR_SPACES.map((cs) => (
-                <option key={cs} value={cs}>
-                  {cs}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="start-actions">
-          <button type="button" className="btn-primary" onClick={create} disabled={busy}>
-            创建工程
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            onClick={() => void run(() => openProject())}
-            disabled={busy}
-          >
-            打开已有工程…
-          </button>
-          {hasProject && (
+          <div className="start-hero-actions">
+            <button type="button" className="btn-primary" onClick={create} disabled={busy}>
+              新建项目
+            </button>
             <button
               type="button"
               className="btn-ghost"
-              onClick={hideStartScreen}
+              onClick={() => void run(() => openProject())}
               disabled={busy}
             >
-              取消
+              打开项目
             </button>
-          )}
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => {
+                const first = recent[0];
+                if (first) void run(() => openProjectAt(first.path));
+              }}
+              disabled={busy || recent.length === 0}
+              title={recent[0]?.path ?? "还没有打开过工程"}
+            >
+              最近使用{recent.length > 0 ? `：${recent[0].name}` : ""}
+            </button>
+          </div>
         </div>
 
-        <div className="start-recent">
-          <div className="start-recent-head">打开最近工程</div>
+        {/* 新建工程表单：所有字段都真实生效 */}
+        <div className="start-form">
+          <label className="start-field">
+            <span className="start-label">工程名</span>
+            <input
+              className="start-input"
+              type="text"
+              value={name}
+              maxLength={80}
+              placeholder={DEFAULT_NAME}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+
+          <label className="start-field">
+            <span className="start-label">预设</span>
+            <select
+              className="start-select"
+              value={preset}
+              onChange={(e) => setPreset(e.target.value)}
+            >
+              {RESOLUTIONS.map((r) => (
+                <option key={presetKey(r.width, r.height)} value={presetKey(r.width, r.height)}>
+                  {r.label}
+                </option>
+              ))}
+              <option value={CUSTOM}>自定义…</option>
+            </select>
+          </label>
+
+          {preset === CUSTOM && (
+            <div className="start-field start-field-custom">
+              <span className="start-label">画幅（像素）</span>
+              <div className="start-custom-row">
+                <input
+                  className="start-input start-input-num"
+                  type="number"
+                  min={1}
+                  max={16384}
+                  value={customWidth}
+                  onChange={(e) => setCustomWidth(Number(e.target.value))}
+                />
+                <span className="start-times">×</span>
+                <input
+                  className="start-input start-input-num"
+                  type="number"
+                  min={1}
+                  max={16384}
+                  value={customHeight}
+                  onChange={(e) => setCustomHeight(Number(e.target.value))}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="start-grid">
+            <label className="start-field">
+              <span className="start-label">帧率</span>
+              <select
+                className="start-select"
+                value={String(frameRate)}
+                onChange={(e) => setFrameRate(Number(e.target.value))}
+              >
+                {FRAME_RATES.map((fps) => (
+                  <option key={fps} value={String(fps)}>
+                    {fps} fps
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="start-field">
+              <span className="start-label">色彩空间</span>
+              <select
+                className="start-select"
+                value={colorSpace}
+                onChange={(e) => setColorSpace(e.target.value)}
+              >
+                {COLOR_SPACES.map((cs) => (
+                  <option key={cs} value={cs}>
+                    {cs}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="start-actions">
+            <button type="button" className="btn-primary" onClick={create} disabled={busy}>
+              创建工程
+            </button>
+            {hasProject && (
+              <button type="button" className="btn-ghost" onClick={hideStartScreen} disabled={busy}>
+                取消
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* 模板：点了真的把预设选好（真实生效，不是贴图） */}
+        <div className="start-section">
+          <div className="start-section-title">模板</div>
+          <div className="start-templates">
+            {RESOLUTIONS.map((r) => (
+              <button
+                key={presetKey(r.width, r.height)}
+                type="button"
+                className={`start-template${preset === presetKey(r.width, r.height) ? " active" : ""}`}
+                onClick={() => setPreset(presetKey(r.width, r.height))}
+              >
+                <span className="start-template-frame" style={{ aspectRatio: `${r.width} / ${r.height}` }} />
+                <span className="start-template-label">{r.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 学习：真实外链 */}
+        <div className="start-section">
+          <div className="start-section-title">学习</div>
+          <div className="start-learn">
+            <a className="start-learn-link" href="https://reelix.xiaofang.studio/docs" target="_blank" rel="noreferrer">
+              入门教程
+            </a>
+            <a className="start-learn-link" href="https://reelix.xiaofang.studio/docs/shortcuts" target="_blank" rel="noreferrer">
+              快捷键速查
+            </a>
+            <a className="start-learn-link" href="https://reelix.xiaofang.studio" target="_blank" rel="noreferrer">
+              小方工作室官网
+            </a>
+          </div>
+        </div>
+
+        {/* 最近工程：点一下直接打开（真实） */}
+        <div className="start-section">
+          <div className="start-section-title">最近使用</div>
           {recent.length === 0 ? (
             <div className="start-recent-empty">还没有打开过工程</div>
           ) : (
-            <div className="start-recent-list">
+            /* 横向卡片流（Strata 式：横着滑，hover 抬起） */
+            <div className="start-recent-scroll">
               {recent.map((item) => (
                 <button
                   key={item.path}
                   type="button"
-                  className="start-recent-item"
+                  className="start-recent-card"
                   title={item.path}
                   disabled={busy}
                   onClick={() => void run(() => openProjectAt(item.path))}
                 >
-                  <span className="start-recent-name">{item.name}</span>
-                  <span className="start-recent-path">{item.path}</span>
+                  <span className="start-recent-card-name">{item.name}</span>
+                  <span className="start-recent-card-path">{item.path}</span>
                 </button>
               ))}
             </div>

@@ -34,3 +34,7 @@ Desktop.ini
 *.log
 npm-debug.log*
 yarn-error.log*
+# 构建/调试临时文件
+_*.txt
+_dev.log
+*.log

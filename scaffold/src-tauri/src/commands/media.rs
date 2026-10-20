@@ -37,6 +37,7 @@ pub fn import_media(paths: Vec<String>, state: State<'_, AppState>) -> Result<Ve
             codec: info.codec,
             has_audio: info.has_audio,
             missing: !Path::new(&path).exists(),
+            bin_id: None,
         };
         // 同一个路径不重复导入
         if project.assets.iter().any(|a| a.path == asset.path) {
@@ -163,4 +164,52 @@ pub fn generate_thumbnail(
     let bytes =
         std::fs::read(&path).map_err(|e| format!("缩略图读缓存失败：{e}"))?;
     Ok(Response::new(bytes))
+}
+
+/// 生成代理媒体：把高码率素材转成低码率小体积副本（1/4 画幅、1.5M、24fps），
+/// 返回代理文件路径。剪映说的"代理模式"就是这个：剪辑流畅，导出仍用原件。
+#[tauri::command]
+pub fn make_proxy(asset_id: String, state: State<'_, AppState>) -> Result<String, String> {
+    use crate::compositor::decode::locate_ffmpeg;
+    let project = crate::commands::project::require_project(&state)?;
+    let asset = project
+        .assets
+        .iter()
+        .find(|a| a.id == asset_id)
+        .ok_or_else(|| "找不到素材".to_string())?
+        .clone();
+    if asset.missing {
+        return Err("素材文件丢失，先重新链接".to_string());
+    }
+    let ffmpeg = locate_ffmpeg().ok_or_else(|| "没有找到 ffmpeg，无法生成代理".to_string())?;
+    let cache_dir = {
+        let guard = lock(&state.settings)?;
+        PathBuf::from(&guard.cache_dir)
+    };
+    let proxy_dir = cache_dir.join("proxy");
+    std::fs::create_dir_all(&proxy_dir).map_err(|e| format!("创建代理目录失败：{e}"))?;
+    let stamp = new_id("proxy");
+    let out = proxy_dir.join(format!("{stamp}.mp4"));
+    // 宽高按 1/4（向下取偶数，H.264 要求偶数边）
+    let w = (asset.width / 4).max(2) & !1;
+    let h = (asset.height / 4).max(2) & !1;
+    let mut cmd = std::process::Command::new(&ffmpeg);
+    cmd.args(["-y", "-hide_banner", "-v", "error", "-nostdin", "-i"]);
+    cmd.arg(&asset.path);
+    cmd.args(["-vf", &format!("scale={}:{}", w, h)]);
+    cmd.args(["-r", "24", "-c:v", "libx264", "-preset", "veryfast", "-b:v", "1500k"]);
+    if asset.has_audio {
+        cmd.args(["-c:a", "aac", "-b:a", "64k"]);
+    } else {
+        cmd.arg("-an");
+    }
+    cmd.arg(&out);
+    super::export::no_window(&mut cmd);
+    let status = cmd
+        .status()
+        .map_err(|e| format!("启动 ffmpeg 失败：{e}"))?;
+    if !status.success() {
+        return Err("ffmpeg 生成代理失败（可能编码器不可用）".to_string());
+    }
+    Ok(out.to_string_lossy().into_owned())
 }

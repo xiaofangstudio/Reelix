@@ -11,7 +11,7 @@
 import { useAppStore } from "./appStore";
 import type { Asset, Clip, Id, Project, Track } from "../types/project";
 import type { ProjectSettings } from "../services/project";
-import { dialog, exportApi, history, media, project as projectApi, render as renderApi, subtitle, timeline } from "../services";
+import { audio, dialog, exportApi, generators, graph, history, media, project as projectApi, render as renderApi, subtitle, timeline } from "../services";
 import { rememberRecentProject } from "../core/recentProjects";
 
 /** 没起名字时用的默认工程名 */
@@ -236,6 +236,24 @@ export async function importMedia(): Promise<boolean> {
       return false;
     }
 
+    // 自动适配（剪映习惯）：序列还没上过任何片段、且导入的是视频/图片时，
+    // 把序列画幅与帧率改成这个素材的规格。
+    const seq = store.project?.sequences[0];
+    const seqEmpty = (seq?.tracks ?? []).every((t) => t.clips.length === 0);
+    const firstVisual = added.find((a) => a.kind === "video" || a.kind === "image");
+    if (seq && seqEmpty && firstVisual && (firstVisual.width ?? 0) > 0) {
+      try {
+        const { project } = await import("../services");
+        const adapted = await project.adaptSequenceToAsset(seq.id, firstVisual.id);
+        useAppStore.getState().syncProject(adapted);
+        useAppStore
+          .getState()
+          .pushNotice("info", `已按素材适配画幅：${adapted.sequences[0].width}×${adapted.sequences[0].height}`);
+      } catch {
+        /* 适配失败不阻塞导入 */
+      }
+    }
+
     await refreshProject();
     useAppStore
       .getState()
@@ -366,6 +384,247 @@ function locateClip(project: Project, clipId: Id): { clip: Clip; kind: Track["ki
     }
   }
   return null;
+}
+
+/** 给选中的片段加一个文字效果（图形与字幕 ▸ 新建图层 ▸ 文字）。真挂效果，不是摆设。 */
+export async function addTextToSelectedClip(): Promise<boolean> {
+  const ids = selectedClipIds();
+  if (ids.length === 0) {
+    useAppStore.getState().pushNotice("info", "先在时间线上选中一个片段");
+    return false;
+  }
+  useAppStore.getState().addEffect(ids[0], "text");
+  return true;
+}
+
+/**
+ * 新建生成器素材（白底 / 黑场 / 彩条 / 颜色遮罩）并落到第一条视频轨末尾。
+ * 后端 new_generator 用 ffmpeg lavfi 真生成 PNG，再按路径走 import_media 进工程——
+ * 预览 / 合成 / 导出天然支持，不是摆设。
+ */
+export async function createGeneratorAsset(kind: string, seconds: number): Promise<boolean> {
+  if (!useAppStore.getState().project) {
+    useAppStore.getState().pushNotice("info", "先新建或打开一个工程");
+    return false;
+  }
+  try {
+    const gen = await generators.newGenerator(kind, seconds);
+    await media.importMedia([gen.path]);
+    await refreshProject();
+    const snapshot = await projectApi.getProject();
+    const asset = snapshot?.assets.find((a) => a.path === gen.path);
+    const videoTrack = snapshot?.sequences[0]?.tracks
+      .filter((t) => t.kind === "video")
+      .sort((a, b) => a.index - b.index)[0];
+    if (!asset || !videoTrack) {
+      useAppStore.getState().pushNotice("error", "生成素材失败：工程里没有视频轨");
+      return false;
+    }
+    // 落点 = 该视频轨上最后一个片段的末尾（没有片段就 0）
+    let endMs = 0;
+    for (const clip of videoTrack.clips) {
+      endMs = Math.max(endMs, clip.startMs + clip.durationMs);
+    }
+    await placeAssetAt(asset.id, videoTrack.id, endMs);
+    useAppStore.getState().pushNotice("info", `已添加「${gen.name}」并放到视频轨末尾`);
+    return true;
+  } catch (err) {
+    reportFailure(err, "新建生成器素材失败");
+    return false;
+  }
+}
+
+/** 重新链接离线素材：改后端工程数据后拉快照（素材箱 404 页与「连接媒体」共用）。 */
+export async function relinkAsset(assetId: Id, newPath: string): Promise<boolean> {
+  try {
+    await media.relinkMedia(assetId, newPath);
+    await refreshProject();
+    useAppStore.getState().pushNotice("info", "已重新链接素材");
+    return true;
+  } catch (err) {
+    reportFailure(err, "重新链接失败");
+    return false;
+  }
+}
+
+/** 波纹删除：删掉选中片段，同轨后续片段整体前移，不留空（PR 的 Ripple Delete）。 */
+export async function rippleDeleteSelected(): Promise<boolean> {
+  const ids = selectedClipIds();
+  if (ids.length === 0) return false;
+  try {
+    const snapshot = await projectApi.getProject();
+    // 收集被删片段（轨道 + 起点 + 时长），按起点从晚到早逐个处理，避免连锁偏移
+    const targets: Array<{ id: Id; trackId: Id; endMs: number; durationMs: number }> = [];
+    for (const seq of snapshot?.sequences ?? []) {
+      for (const track of seq.tracks) {
+        for (const clip of track.clips) {
+          if (ids.includes(clip.id)) {
+            targets.push({
+              id: clip.id,
+              trackId: track.id,
+              endMs: clip.startMs + clip.durationMs,
+              durationMs: clip.durationMs,
+            });
+          }
+        }
+      }
+    }
+    targets.sort((a, b) => b.endMs - a.endMs);
+    for (const t of targets) {
+      await timeline.deleteClips([t.id]);
+      // 删完后拉最新快照，把同轨上排在它后面的片段前移一个身位
+      const after = await projectApi.getProject();
+      for (const seq of after?.sequences ?? []) {
+        for (const track of seq.tracks) {
+          if (track.id !== t.trackId) continue;
+          for (const clip of track.clips) {
+            if (clip.startMs >= t.endMs) {
+              await timeline.moveClip(clip.id, Math.max(0, clip.startMs - t.durationMs), track.id);
+            }
+          }
+        }
+      }
+    }
+    await refreshProject();
+    useAppStore.getState().pushNotice("info", "已波纹删除");
+    return true;
+  } catch (err) {
+    reportFailure(err, "波纹删除失败");
+    return false;
+  }
+}
+
+/** 切片段启用/禁用（右键「启用」）。禁用的片段预览与导出都跳过。 */
+export async function setClipEnabled(clipId: Id, enabled: boolean): Promise<boolean> {
+  try {
+    await timeline.setClipFlags(clipId, { enabled });
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "切换片段启用失败");
+    return false;
+  }
+}
+
+/** 给选中片段打标签（右键「标签 ▸ 颜色」，高饱和标签色）。 */
+export async function setClipLabel(label: string): Promise<boolean> {
+  const ids = selectedClipIds();
+  if (ids.length === 0) return false;
+  try {
+    for (const id of ids) {
+      await timeline.setClipFlags(id, { label: label || "" });
+    }
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "设置标签失败");
+    return false;
+  }
+}
+
+/**
+ * 取消视音频链接（右键「取消链接」）：
+ * 选中片段所在链接组（compound_id）整体解除，画面与声音从此各自独立。
+ * PR 语义：点组内任意一段的「取消链接」，整组分开。
+ */
+export async function unlinkCompound(clipId: Id): Promise<boolean> {
+  try {
+    await timeline.unlinkCompound(clipId);
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "取消链接失败");
+    return false;
+  }
+}
+
+/** 在资源管理器里打开素材所在目录（右键「编辑原始素材」）。 */
+export async function revealAsset(assetId: Id): Promise<boolean> {
+  const snapshot = await projectApi.getProject();
+  const asset = snapshot?.assets.find((a) => a.id === assetId);
+  if (!asset || !asset.path) {
+    useAppStore.getState().pushNotice("info", "这个素材没有磁盘文件（生成器素材）");
+    return false;
+  }
+  try {
+    await audio.revealPath(asset.path);
+    return true;
+  } catch (err) {
+    reportFailure(err, "打开素材目录失败");
+    return false;
+  }
+}
+
+/**
+ * 嵌套（Pre-compose / Nest）：把选中片段的效果图节点折叠成一个复合节点。
+ * 后端 `collapse_compound` 已有实现，这里只是把片段 → 节点的对应关系接上。
+ */
+export async function nestSelectedClips(): Promise<boolean> {
+  const ids = selectedClipIds();
+  if (ids.length === 0) {
+    useAppStore.getState().pushNotice("info", "先选中要嵌套的片段");
+    return false;
+  }
+  try {
+    const snapshot = await projectApi.getProject();
+    const nodeIds: string[] = [];
+    for (const seq of snapshot?.sequences ?? []) {
+      for (const track of seq.tracks) {
+        for (const clip of track.clips) {
+          if (ids.includes(clip.id) && clip.nodeId) nodeIds.push(clip.nodeId);
+        }
+      }
+    }
+    if (nodeIds.length === 0) return false;
+    await graph.collapseCompound(nodeIds);
+    await refreshProject();
+    useAppStore.getState().pushNotice("info", `已把 ${nodeIds.length} 个片段嵌套成复合节点`);
+    return true;
+  } catch (err) {
+    reportFailure(err, "嵌套失败");
+    return false;
+  }
+}
+
+/** 移除没被任何片段引用的素材（编辑 ▸ 移除未使用项）。 */
+export async function removeUnusedAssets(): Promise<boolean> {
+  const snapshot = await projectApi.getProject();
+  if (!snapshot) return false;
+  const used = new Set<Id>();
+  for (const seq of snapshot.sequences) {
+    for (const track of seq.tracks) {
+      for (const clip of track.clips) used.add(clip.assetId);
+    }
+  }
+  const unused = snapshot.assets.filter((a) => !used.has(a.id));
+  if (unused.length === 0) {
+    useAppStore.getState().pushNotice("info", "没有未使用的素材");
+    return true;
+  }
+  try {
+    for (const asset of unused) {
+      await media.removeMedia(asset.id);
+    }
+    await refreshProject();
+    useAppStore.getState().pushNotice("info", `已移除 ${unused.length} 个未使用素材`);
+    return true;
+  } catch (err) {
+    reportFailure(err, "移除未使用素材失败");
+    return false;
+  }
+}
+
+/** 加一条轨道并拉快照（序列 ▸ 添加视频轨 / 音频轨）。 */
+export async function addTrackOfKind(kind: Track["kind"]): Promise<boolean> {
+  try {
+    await timeline.addTrack(kind);
+    await refreshProject();
+    useAppStore.getState().pushNotice("info", kind === "video" ? "已添加视频轨" : "已添加音频轨");
+    return true;
+  } catch (err) {
+    reportFailure(err, "添加轨道失败");
+    return false;
+  }
 }
 
 /** 时间线当前选中的片段集合：多选优先，退回单选。 */
@@ -588,6 +847,131 @@ export async function updateClipText(clipId: Id, text: string): Promise<boolean>
 }
 
 /**
+ * 按文字预设真加一条字幕片段（文本库双击 / 回车用）。
+ * 不需要先选中任何片段：直接落在字幕轨的播放头处，3 秒起步。
+ */
+export async function addTextAtPlayhead(preset: { text: string }): Promise<boolean> {
+  const state = useAppStore.getState();
+  const sequence = state.project?.sequences[0];
+  if (!state.project || !sequence) {
+    state.pushNotice("info", "先新建或打开一个工程");
+    return false;
+  }
+  try {
+    const clip = await subtitle.addSubtitleClip(
+      sequence.id,
+      Math.max(0, state.playheadMs),
+      3000,
+      preset.text
+    );
+    await refreshProject();
+    useAppStore.getState().selectClip(clip.id);
+    useAppStore.getState().pushNotice("info", "已添加文字片段，右侧属性里可继续改样式");
+    return true;
+  } catch (err) {
+    reportFailure(err, "添加文字失败");
+    return false;
+  }
+}
+
+/** 把素材归入文件夹；binId 传 null 表示移出到「全部」。 */
+export async function setAssetBinAction(assetId: Id, binId: Id | null): Promise<boolean> {
+  try {
+    await timeline.setAssetBin(assetId, binId);
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "素材归类失败");
+    return false;
+  }
+}
+
+/** 新建素材箱文件夹，返回新文件夹 id（失败返回 null）。 */
+export async function createBinAction(name: string): Promise<Id | null> {
+  try {
+    const bin = await timeline.createBin(name);
+    await refreshProject();
+    return bin.id;
+  } catch (err) {
+    reportFailure(err, "新建文件夹失败");
+    return null;
+  }
+}
+
+/** 删除素材箱文件夹：文件夹没了，里面的素材回到「全部」。 */
+export async function removeBinAction(binId: Id): Promise<boolean> {
+  try {
+    await timeline.removeBin(binId);
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "删除文件夹失败");
+    return false;
+  }
+}
+
+/** 重命名素材箱文件夹。 */
+export async function renameBinAction(binId: Id, name: string): Promise<boolean> {
+  try {
+    await timeline.renameBin(binId, name);
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "重命名文件夹失败");
+    return false;
+  }
+}
+
+/** 在播放头处加一个时间线标记（M 键 / 标记面板 / 时间轴右键共用）。 */
+export async function addMarkerAtPlayhead(name?: string | null): Promise<boolean> {
+  const state = useAppStore.getState();
+  const sequence = state.project?.sequences[0];
+  if (!sequence) return false;
+  try {
+    await timeline.addMarker(sequence.id, Math.max(0, state.playheadMs), name ?? null);
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "添加标记失败");
+    return false;
+  }
+}
+
+/** 删除一个时间线标记（标记页签行尾 × 用）。 */
+export async function removeMarkerAction(markerId: Id): Promise<boolean> {
+  const sequence = useAppStore.getState().project?.sequences[0];
+  if (!sequence) return false;
+  try {
+    await timeline.removeMarker(sequence.id, markerId);
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "删除标记失败");
+    return false;
+  }
+}
+
+/**
+ * 跳到某个历史点（Rust 侧 jump_history：游标移到该步，
+ * 工程与关键帧快照一起回放——即这一步操作完成后的状态）。
+ */
+export async function jumpHistoryTo(index: number): Promise<boolean> {
+  if (!useAppStore.getState().project) return false;
+  try {
+    const ok = await history.jumpHistory(index);
+    if (!ok) {
+      useAppStore.getState().pushNotice("info", "这个历史点已经不在栈里了");
+      return false;
+    }
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "跳转历史失败");
+    return false;
+  }
+}
+
+/**
  * 向 Rust 侧要一帧监视器画面。后端按序列、播放时刻与画幅上限渲染出 PNG，
  * 直接把字节回给调用方；怎么显示（Blob / objectURL）是视图的事。
  *
@@ -611,4 +995,141 @@ export async function setPreviewQuality(scale: number): Promise<boolean> {
     reportFailure(err, "设置预览质量失败");
     return false;
   }
+}
+
+/** 设置片段入场转场（叠化 / 黑场 / 白场）；kind 传 null 清除。 */
+export async function setClipTransition(
+  clipId: Id,
+  kind: "crossDissolve" | "dipToBlack" | "dipToWhite" | null,
+  durationMs = 500
+): Promise<boolean> {
+  try {
+    await timeline.setTransition(clipId, kind, durationMs);
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "设置转场失败");
+    return false;
+  }
+}
+
+/** 设置音频片段淡入淡出（毫秒，0 表示取消）。 */
+export async function setClipAudioFade(
+  clipId: Id,
+  fadeInMs: number,
+  fadeOutMs: number
+): Promise<boolean> {
+  try {
+    await timeline.setAudioFade(clipId, Math.max(0, fadeInMs), Math.max(0, fadeOutMs));
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "设置音频淡变失败");
+    return false;
+  }
+}
+
+/** 在播放头处加一个时间线标记（右键「添加标记」）。 */
+export async function addTimelineMarker(sequenceId: Id, atMs: number): Promise<boolean> {
+  try {
+    await timeline.addMarker(sequenceId, Math.max(0, atMs), null);
+    await refreshProject();
+    useAppStore.getState().pushNotice("info", "已添加标记");
+    return true;
+  } catch (err) {
+    reportFailure(err, "添加标记失败");
+    return false;
+  }
+}
+
+/** 删除时间线标记。 */
+export async function removeTimelineMarker(sequenceId: Id, markerId: Id): Promise<boolean> {
+  try {
+    await timeline.removeMarker(sequenceId, markerId);
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "删除标记失败");
+    return false;
+  }
+}
+
+/** 拖动时间线标记到新时刻。 */
+export async function moveTimelineMarker(
+  sequenceId: Id,
+  markerId: Id,
+  atMs: number
+): Promise<boolean> {
+  try {
+    await timeline.moveMarker(sequenceId, markerId, Math.max(0, atMs));
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "移动标记失败");
+    return false;
+  }
+}
+
+/**
+ * 裁剪到播放头：left = 删掉播放头左边的部分（trim-in），
+ * right = 删掉播放头右边的部分（trim-out）。对选中片段有效（含摄像机/音频）。
+ */
+export async function trimSelectedToPlayhead(side: "left" | "right"): Promise<boolean> {
+  const st = useAppStore.getState();
+  const project = st.project;
+  const ids = st.selectedClipIds;
+  if (!project || ids.length === 0) return false;
+  const playhead = st.playheadMs;
+  let ok = false;
+  for (const id of ids) {
+    const found = locateClip(project, id);
+    if (!found) continue;
+    const c = found.clip;
+    const local = playhead - c.startMs; // 播放头落在片段内的相对毫秒
+    if (local <= 0 || local >= c.durationMs) continue; // 播放头不在片段内：跳过
+    if (side === "left") {
+      await trimClipTo(id, {
+        startMs: playhead,
+        inMs: c.inMs + local,
+        outMs: c.outMs,
+      });
+    } else {
+      await trimClipTo(id, {
+        startMs: c.startMs,
+        inMs: c.inMs,
+        outMs: c.inMs + local,
+      });
+    }
+    ok = true;
+  }
+  if (ok) st.pushNotice("info", side === "left" ? "已裁剪掉播放头左边的部分" : "已裁剪掉播放头右边的部分");
+  return ok;
+}
+
+/**
+ * 把选中片段移到播放头：片段在播放头左边的移到右侧贴合，右边的移到左侧贴合。
+ */
+export async function moveSelectedToPlayhead(): Promise<boolean> {
+  const st = useAppStore.getState();
+  const project = st.project;
+  const ids = st.selectedClipIds;
+  if (!project || ids.length === 0) return false;
+  const playhead = st.playheadMs;
+  let moved = 0;
+  for (const id of ids) {
+    const found = locateClip(project, id);
+    if (!found) continue;
+    const c = found.clip;
+    const target = c.startMs + c.durationMs <= playhead
+      ? playhead                                   // 片段整体在播放头左侧：起点贴到播放头
+      : playhead - c.durationMs;                   // 在右侧：终点贴到播放头
+    if (Math.abs(target - c.startMs) < 0.5) continue;
+    await moveClipsTo([{ id, startMs: Math.max(0, target) }]);
+    moved += 1;
+  }
+  if (moved > 0) {
+    useAppStore.getState().pushNotice("info", `已把 ${moved} 个片段移到播放头`);
+    return true;
+  }
+  return false;
 }

@@ -253,6 +253,30 @@ export const EFFECT_CATALOG: EffectCatalogEntry[] = [
     ],
   },
 
+  // ---- GPU 加速效果（真走 GPU 渲染管线；设备不可用时自动回落 CPU） ----
+  {
+    type: "gpuGrade",
+    label: "GPU 调色",
+    category: "GPU",
+    addable: true,
+    inputs: [IN],
+    outputs: [OUT],
+    params: [
+      { key: "exposure", label: "曝光", value: 0, min: -200, max: 200, step: 1 },
+      { key: "contrast", label: "对比度", value: 1, min: 0, max: 3, step: 0.01 },
+      { key: "saturation", label: "饱和度", value: 1, min: 0, max: 3, step: 0.01 },
+    ],
+  },
+  {
+    type: "gpuLut",
+    label: "GPU LUT",
+    category: "GPU",
+    addable: true,
+    inputs: [IN],
+    outputs: [OUT],
+    params: [{ key: "file", label: ".cube 文件", value: "" }],
+  },
+
   // ---- 滤镜 ----
   {
     type: "blur",
@@ -378,7 +402,10 @@ export const EFFECT_CATALOG: EffectCatalogEntry[] = [
     inputs: [IN],
     outputs: [OUT],
     params: [
-      { key: "shape", label: "形状", value: "rect" },
+      // 形状种类（照 AE 蒙版：矩形/椭圆/圆角/星形/多边形；值为内核识别的关键字）
+      { key: "shape", label: "形状（rect/ellipse/rounded/star）", value: "rect" },
+      { key: "roundness", label: "圆角", value: 0, min: 0, max: 100, step: 1 },
+      { key: "points", label: "角点数（星/多边形）", value: 5, min: 3, max: 24, step: 1 },
       ...MASK_BASE,
     ],
   },
@@ -397,14 +424,16 @@ export const EFFECT_CATALOG: EffectCatalogEntry[] = [
   },
   {
     type: "maskTrack",
-    label: "蒙版跟踪",
+    // 诚实命名：内核目前与「形状遮罩」相同（还没有真跟踪解算），
+    // 名字里带「（跟踪待接入）」而不是冒充跟踪功能。
+    label: "蒙版（跟踪待接入）",
     category: "蒙版",
     addable: true,
     inputs: [IN],
     outputs: [OUT],
     params: [
       { key: "shape", label: "形状", value: "track" },
-      { key: "trackId", label: "追踪轨迹", value: "" },
+      { key: "trackId", label: "追踪轨迹（暂未解算）", value: "" },
       ...MASK_BASE,
     ],
   },

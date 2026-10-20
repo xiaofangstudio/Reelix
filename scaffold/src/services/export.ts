@@ -30,6 +30,14 @@ export interface ExportRange {
   endMs: number;
 }
 
+/**
+ * 导出 EDL（CMX3600 交换格式）：把当前序列的视频轨剪进关系写成 .edl，
+ * 给达芬奇 / PR / EE 对剪用。返回事件条数。
+ */
+export function exportEdl(sequenceId: string, path: string): Promise<number> {
+  return invoke<number>("export_edl", { sequenceId, path });
+}
+
 /** 导出进度事件的载荷 */
 export interface ExportProgressPayload {
   jobId: string;

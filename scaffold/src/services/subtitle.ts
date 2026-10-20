@@ -28,9 +28,12 @@ export function asrStatus(): Promise<AsrStatus> {
   return invoke<AsrStatus>("asr_status");
 }
 
-/** 对某个视频片段抽音识别，返回时间线对齐的字幕段（尚未写入轨道） */
-export function generateSubtitles(clipId: Id): Promise<SubtitleSegment[]> {
-  return invoke<SubtitleSegment[]>("generate_subtitles", { clipId });
+/**
+ * 对某个视频片段抽音识别，返回时间线对齐的字幕段（尚未写入轨道）。
+ * language：auto（默认）/ cantonese / english / japanese / korean / nospeech。
+ */
+export function generateSubtitles(clipId: Id, language = "auto"): Promise<SubtitleSegment[]> {
+  return invoke<SubtitleSegment[]>("generate_subtitles", { clipId, language });
 }
 
 /** 把识别结果写进字幕轨（没有就新建），返回写入条数 */

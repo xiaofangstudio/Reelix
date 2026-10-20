@@ -77,6 +77,7 @@ export type NodeCategory =
   | "粒子"
   | "合成"
   | "摄像机"
+  | "GPU"
   | "输出";
 
 /** 节点类型注册表里的一条 */

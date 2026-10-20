@@ -85,6 +85,18 @@ impl Default for Transform3D {
     }
 }
 
+/// 衔接处转场：右片段（incoming）头部与左片段（outgoing）尾部的重叠画法。
+///
+/// `kind` 取 `"crossDissolve"`（叠化）或 `"dipToBlack"`（黑场过渡）；
+/// `duration_ms` 是实际生效的重叠时长——设置时若媒体手柄不足会被收窄，
+/// 这里存的是收窄后的值，清除转场时按它精确恢复邻接。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transition {
+    pub kind: String,
+    pub duration_ms: f64,
+}
+
 /// 一个片段。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +126,25 @@ pub struct Clip {
     /// 字幕文字。只有字幕轨上的片段会用到，普通片段缺省。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// 右键「启用」勾选状态；禁用的片段不参与预览与导出（渲染时跳过）
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 右键「标签」颜色名（PR 的低饱和标签色，界面用高饱和渲染），未设置缺省
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// 头部衔接转场；与左片段的重叠窗口内做画面混合（合成器里生效）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition_in: Option<Transition>,
+    /// 音频慢入时长（毫秒）；区间内音量从 0 线性升到满，混音时生效
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_fade_in_ms: Option<f64>,
+    /// 音频慢出时长（毫秒）；区间内音量从满线性降到 0，混音时生效
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_fade_out_ms: Option<f64>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Clip {
@@ -176,6 +207,11 @@ mod tests {
             enable_3d: false,
             transform_3d: None,
             text: None,
+            enabled: true,
+            label: None,
+            transition_in: None,
+            audio_fade_in_ms: None,
+            audio_fade_out_ms: None,
         }
     }
 
@@ -273,5 +309,64 @@ mod tests {
 
         track.clip_mut("c1").expect("能取到可变片段").duration_ms = 500.0;
         assert!((track.clip("c1").unwrap().end_ms() - 500.0).abs() < 1e-9);
+    }
+
+    /// 转场与音频淡入淡出按 camelCase 来回序列化；没设置时不写多余字段。
+    #[test]
+    fn clip_serializes_transition_and_fades() {
+        let plain: Value = serde_json::to_value(clip(0.0, 1000.0)).unwrap();
+        assert!(plain.get("transitionIn").is_none(), "无转场时不应写 transitionIn");
+        assert!(plain.get("audioFadeInMs").is_none(), "无淡入时不应写 audioFadeInMs");
+        assert!(plain.get("audioFadeOutMs").is_none(), "无淡出时不应写 audioFadeOutMs");
+
+        let mut c = clip(0.0, 1000.0);
+        c.transition_in = Some(Transition {
+            kind: "crossDissolve".into(),
+            duration_ms: 500.0,
+        });
+        c.audio_fade_in_ms = Some(200.0);
+        c.audio_fade_out_ms = Some(300.0);
+        let v: Value = serde_json::to_value(&c).unwrap();
+        assert_eq!(
+            v.get("transitionIn").and_then(|t| t.get("kind")).and_then(Value::as_str),
+            Some("crossDissolve"),
+            "转场类型要原样写出"
+        );
+        assert_eq!(
+            v.get("transitionIn").and_then(|t| t.get("durationMs")).and_then(Value::as_f64),
+            Some(500.0),
+            "转场时长键必须叫 durationMs"
+        );
+        assert_eq!(v.get("audioFadeInMs").and_then(Value::as_f64), Some(200.0));
+        assert_eq!(v.get("audioFadeOutMs").and_then(Value::as_f64), Some(300.0));
+
+        let back: Clip = serde_json::from_value(v).expect("带转场的片段应当能反序列化");
+        assert_eq!(
+            back.transition_in.as_ref().map(|t| t.kind.as_str()),
+            Some("crossDissolve")
+        );
+        assert_eq!(back.audio_fade_in_ms, Some(200.0));
+    }
+
+    /// 旧工程 JSON 没有转场 / 淡入淡出字段也必须能加载，回落到无转场。
+    #[test]
+    fn clip_loads_legacy_json_without_transition_fields() {
+        let legacy = serde_json::json!({
+            "id": "c1",
+            "assetId": "a1",
+            "trackId": "t1",
+            "startMs": 0.0,
+            "durationMs": 1000.0,
+            "inMs": 0.0,
+            "outMs": 1000.0,
+            "speed": 1.0,
+            "reversed": false,
+            "nodeId": "n1"
+        });
+        let back: Clip = serde_json::from_value(legacy).expect("旧 JSON 必须能加载");
+        assert!(back.transition_in.is_none(), "缺 transitionIn 应回落 None");
+        assert!(back.audio_fade_in_ms.is_none(), "缺 audioFadeInMs 应回落 None");
+        assert!(back.audio_fade_out_ms.is_none(), "缺 audioFadeOutMs 应回落 None");
+        assert!(back.enabled, "缺 enabled 应回落为 true");
     }
 }

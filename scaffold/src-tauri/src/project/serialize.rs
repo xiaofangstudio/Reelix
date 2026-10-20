@@ -117,6 +117,7 @@ pub fn new_project_with(
         color_space: color_space.to_string(),
         duration_ms: 0.0,
         root_graph_id,
+        markers: Vec::new(),
         tracks: vec![
             Track {
                 id: new_id("track"),
@@ -151,6 +152,7 @@ pub fn new_project_with(
         assets: Vec::<Asset>::new(),
         sequences: vec![sequence],
         graphs,
+        bins: Vec::new(),
     }
 }
 

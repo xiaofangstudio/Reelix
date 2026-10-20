@@ -399,6 +399,24 @@ export function ExportPage() {
                 预估大小约 {formatBytes(estimateBytes(preset, rangeSeconds))}
               </span>
             )}
+            {/* 交换格式导出：EDL（CMX3600），给达芬奇 / PR 对剪用 */}
+            <button
+              type="button"
+              className="btn-ghost"
+              title="导出 EDL（CMX3600）：把当前序列的剪辑关系交给别的软件"
+              disabled={exportJob.status === "running"}
+              onClick={async () => {
+                const seq = sequence;
+                if (!seq) return;
+                const saved = await dialog.pickSavePath(`${seq.name || "sequence"}.edl`);
+                if (!saved) return;
+                const { exportEdl } = await import("../services/export");
+                const n = await exportEdl(seq.id, saved);
+                pushNotice("info", `已导出 EDL（${n} 条剪辑记录）`);
+              }}
+            >
+              导出 EDL
+            </button>
           </div>
 
           {/* 进度区 */}

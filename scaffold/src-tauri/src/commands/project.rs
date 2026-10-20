@@ -15,7 +15,7 @@ pub struct SaveResult {
 }
 
 /// 取当前项目，未打开时报错。
-fn require_project(state: &State<'_, AppState>) -> Result<Project, String> {
+pub fn require_project(state: &State<'_, AppState>) -> Result<Project, String> {
     let guard = lock(&state.project)?;
     guard
         .clone()
@@ -105,4 +105,36 @@ pub fn close_project(state: State<'_, AppState>) -> Result<bool, String> {
     lock(&state.history)?.clear();
     *lock(&state.cache)? = Default::default();
     Ok(true)
+}
+
+/// 让序列画幅与帧率自动适配某个素材（导入首个视频时用，剪映习惯）。
+#[tauri::command]
+pub fn adapt_sequence_to_asset(
+    sequence_id: String,
+    asset_id: String,
+    state: State<'_, AppState>,
+) -> Result<Project, String> {
+    let mut project = require_project(&state)?;
+    let asset = project
+        .assets
+        .iter()
+        .find(|a| a.id == asset_id)
+        .ok_or_else(|| "找不到素材".to_string())?
+        .clone();
+    let sequence = project
+        .sequences
+        .iter_mut()
+        .find(|s| s.id == sequence_id)
+        .ok_or_else(|| "找不到序列".to_string())?;
+    if asset.width > 0 {
+        sequence.width = asset.width;
+    }
+    if asset.height > 0 {
+        sequence.height = asset.height;
+    }
+    if asset.frame_rate >= 1.0 {
+        sequence.frame_rate = asset.frame_rate;
+    }
+    *lock(&state.project)? = Some(project.clone());
+    Ok(project)
 }

@@ -159,7 +159,9 @@ fn extract_wav(
 }
 
 /// 跑 VAD + 识别，超时十分钟就杀掉，避免坏文件把任务挂死。
-fn run_asr(bundle: &AsrBundle, wav: &Path, log_path: &Path) -> Result<String, String> {
+/// `language` 透传给 SenseVoice：auto 自动检测；还支持 cantonese / english /
+/// japanese / korean / nospeech（留空按 auto）。
+fn run_asr(bundle: &AsrBundle, wav: &Path, log_path: &Path, language: &str) -> Result<String, String> {
     let log = std::fs::File::create(log_path)
         .map_err(|e| format!("创建识别日志失败：{e}"))?;
     let log_err = log
@@ -174,6 +176,10 @@ fn run_asr(bundle: &AsrBundle, wav: &Path, log_path: &Path) -> Result<String, St
     command.args(["--sense-voice-model"]);
     command.arg(&bundle.model);
     command.args(["--num-threads", "2"]);
+    // 多语言识别：语言代号透传（SenseVoice 原生支持，非临时拼串）
+    let lang = language.trim();
+    let lang = if lang.is_empty() { "auto" } else { lang };
+    command.args(["--sense-voice-language", lang]);
     command.arg(wav);
     // DLL 就在 bin 目录里，工作目录必须切过去。
     if let Some(dir) = bundle.binary.parent() {
@@ -236,6 +242,7 @@ pub(crate) fn parse_asr_output(raw: &str) -> Vec<(f64, f64, String)> {
 #[tauri::command(async)]
 pub fn generate_subtitles(
     clip_id: String,
+    language: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<SubtitleSegment>, String> {
     let bundle = locate_asr().ok_or_else(|| ASR_MISSING.to_string())?;
@@ -292,7 +299,7 @@ pub fn generate_subtitles(
     let log = dir.join(format!("{stamp}.log"));
 
     let result = extract_wav(&ffmpeg, Path::new(&source), in_ms, span_ms, &wav)
-        .and_then(|_| run_asr(&bundle, &wav, &log));
+        .and_then(|_| run_asr(&bundle, &wav, &log, &language));
 
     let _ = std::fs::remove_file(&wav);
     let _ = std::fs::remove_file(&log);
@@ -390,6 +397,11 @@ pub fn apply_subtitles(
             enable_3d: false,
             transform_3d: None,
             text: Some(text.to_string()),
+            enabled: true,
+            label: None,
+            transition_in: None,
+            audio_fade_in_ms: None,
+            audio_fade_out_ms: None,
         });
         count += 1;
     }
@@ -468,6 +480,11 @@ pub fn add_subtitle_clip(
         } else {
             text.trim().to_string()
         }),
+        enabled: true,
+        label: None,
+        transition_in: None,
+        audio_fade_in_ms: None,
+        audio_fade_out_ms: None,
     };
 
     let track = sequence
@@ -663,6 +680,11 @@ mod tests {
                     enable_3d: false,
                     transform_3d: None,
                     text: Some("第一句".into()),
+                    enabled: true,
+                    label: None,
+                    transition_in: None,
+                    audio_fade_in_ms: None,
+                    audio_fade_out_ms: None,
                 },
                 Clip {
                     id: "c2".into(),
@@ -679,6 +701,11 @@ mod tests {
                     enable_3d: false,
                     transform_3d: None,
                     text: Some("区间外".into()),
+                    enabled: true,
+                    label: None,
+                    transition_in: None,
+                    audio_fade_in_ms: None,
+                    audio_fade_out_ms: None,
                 },
             ],
         });
