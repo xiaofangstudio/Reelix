@@ -138,6 +138,15 @@ pub struct Clip {
     /// 音频慢入时长（毫秒）；区间内音量从 0 线性升到满，混音时生效
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_fade_in_ms: Option<f64>,
+    /// 高通截止频率（Hz）；混音时二阶 biquad 滤掉低频
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_highpass_hz: Option<f64>,
+    /// 低通截止频率（Hz）；混音时二阶 biquad 滤掉高频
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_lowpass_hz: Option<f64>,
+    /// 延迟回声（毫秒）；混音时叠加一次 0.35 衰减的延迟声
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_delay_ms: Option<f64>,
     /// 音频慢出时长（毫秒）；区间内音量从满线性降到 0，混音时生效
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_fade_out_ms: Option<f64>,
@@ -210,6 +219,9 @@ mod tests {
             enabled: true,
             label: None,
             transition_in: None,
+            audio_highpass_hz: None,
+            audio_lowpass_hz: None,
+            audio_delay_ms: None,
             audio_fade_in_ms: None,
             audio_fade_out_ms: None,
         }

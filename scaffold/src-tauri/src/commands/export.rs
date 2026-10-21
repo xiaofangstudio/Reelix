@@ -148,6 +148,20 @@ pub fn export_edl(
 }
 
 /// 内置导出预设：够用就好，全部中文名。
+/// 探测本机 ffmpeg 是否有某个编码器（-encoders 列表里找名字）。
+fn probe_encoder_available(name: &str) -> bool {
+    let Some(ffmpeg) = crate::compositor::decode::locate_ffmpeg() else {
+        return false;
+    };
+    let out = std::process::Command::new(&ffmpeg)
+        .args(["-hide_banner", "-encoders"])
+        .output();
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).contains(name),
+        Err(_) => false,
+    }
+}
+
 pub fn export_presets() -> Vec<ExportPreset> {
     vec![
         ExportPreset {

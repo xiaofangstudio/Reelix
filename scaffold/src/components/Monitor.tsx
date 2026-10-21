@@ -350,6 +350,8 @@ export function Monitor() {
     );
   }
 
+  // 安全框开关（动作 90% / 字幕 80%）：点监视器左上角按钮切换
+  const [safeGuides, setSafeGuides] = useState(false);
   const frameMs = 1000 / sequence.frameRate;
 
   // 当前播放头下生效的字幕：只看未隐藏的字幕轨，行序按轨道顺序叠上去
@@ -396,6 +398,13 @@ export function Monitor() {
           ) : (
             <span className="monitor-hint">{frameError ?? "正在渲染…"}</span>
           )}
+          {/* 安全框：动作 90% / 字幕 80%（用户要求的监视器叠加层） */}
+          {safeGuides && (
+            <>
+              <div className="monitor-safe action" />
+              <div className="monitor-safe title" />
+            </>
+          )}
           {activeSubtitles.length > 0 && (
             <div className="monitor-subtitle">
               {activeSubtitles.map((text, i) => (
@@ -410,6 +419,14 @@ export function Monitor() {
       </div>
 
       <div className="monitor-bar">
+        <button
+          type="button"
+          className={`ctl${safeGuides ? " on" : ""}`}
+          title="安全框（动作 90% / 字幕 80%）"
+          onClick={() => setSafeGuides((v) => !v)}
+        >
+          ⊞
+        </button>
         <button type="button" className="ctl" title="上一帧（←）" onClick={() => stepBy(-1)}>
           <IconPrevFrame />
         </button>

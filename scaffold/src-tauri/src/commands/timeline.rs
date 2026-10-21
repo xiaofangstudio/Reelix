@@ -87,6 +87,9 @@ pub fn add_clip(
         label: None,
         transition_in: None,
         audio_fade_in_ms: None,
+        audio_highpass_hz: None,
+        audio_lowpass_hz: None,
+        audio_delay_ms: None,
         audio_fade_out_ms: None,
     };
 
@@ -477,7 +480,7 @@ pub fn set_transition(
         }
         Some(kind) => {
             let kind = match kind {
-                "crossDissolve" | "dipToBlack" | "dipToWhite" | "fade" => {
+                "crossDissolve" | "dipToBlack" | "dipToWhite" | "slidePush" | "slidePull" | "wipeLinear" | "wipeRadial" | "wipeBlinds" | "zoomCross" | "fade" => {
                     if kind == "fade" { "crossDissolve".to_string() } else { kind.to_string() }
                 }
                 other => return Err(format!("不支持的转场类型：{other}")),
@@ -686,6 +689,27 @@ pub fn set_asset_bin(
     asset.bin_id = bin_id;
 
     record(&state, "移动素材到素材箱", project)?;
+    *lock(&state.project_dirty)? = true;
+    Ok(true)
+}
+
+
+/// 设置片段音频 DSP：高通/低通截止（Hz，null 关）、回声延迟（ms，null 关）。
+#[tauri::command]
+pub fn set_audio_dsp(
+    clip_id: String,
+    highpass_hz: Option<f64>,
+    lowpass_hz: Option<f64>,
+    delay_ms: Option<f64>,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let mut guard = require_project(&state)?;
+    let project = guard.as_mut().ok_or_else(|| "还没有打开项目".to_string())?;
+    let clip = find_clip_mut(project, &clip_id).ok_or_else(|| "找不到该片段".to_string())?;
+    clip.audio_highpass_hz = highpass_hz.filter(|v| *v > 20.0);
+    clip.audio_lowpass_hz = lowpass_hz.filter(|v| *v > 20.0);
+    clip.audio_delay_ms = delay_ms.filter(|v| *v > 1.0);
+    record(&state, "设置音频处理", project)?;
     *lock(&state.project_dirty)? = true;
     Ok(true)
 }

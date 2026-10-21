@@ -236,6 +236,68 @@ pub fn node_catalog() -> Vec<NodeTypeInfo> {
                 ("strength", ParamValue::Number(100.0)),
             ],
         ),
+        // ---- 生成（AE Generate 分类，纯程序化，无需素材） ----
+        filter_node(
+            "gradient",
+            "渐变",
+            "生成",
+            &[
+                ("colorA", ParamValue::from("#2244cc")),
+                ("colorB", ParamValue::from("#ee7722")),
+                ("angle", ParamValue::Number(90.0)),
+            ],
+        ),
+        filter_node(
+            "circle",
+            "圆",
+            "生成",
+            &[
+                ("centerX", ParamValue::Number(0.5)),
+                ("centerY", ParamValue::Number(0.5)),
+                ("radius", ParamValue::Number(30.0)),
+                ("color", ParamValue::from("#ffffff")),
+                ("feather", ParamValue::Number(5.0)),
+            ],
+        ),
+        filter_node(
+            "checkerboard",
+            "棋盘",
+            "生成",
+            &[
+                ("cell", ParamValue::Number(40.0)),
+                ("colorA", ParamValue::from("#111111")),
+                ("colorB", ParamValue::from("#eeeeee")),
+            ],
+        ),
+        filter_node(
+            "grid",
+            "网格",
+            "生成",
+            &[
+                ("spacing", ParamValue::Number(48.0)),
+                ("lineWidth", ParamValue::Number(2.0)),
+                ("color", ParamValue::from("#33ccff")),
+            ],
+        ),
+        // ---- 风格化补全 ----
+        filter_node(
+            "findEdges",
+            "查找边缘",
+            "风格化",
+            &[("invert", ParamValue::Bool(false))],
+        ),
+        filter_node(
+            "emboss",
+            "浮雕",
+            "风格化",
+            &[("strength", ParamValue::Number(100.0))],
+        ),
+        filter_node(
+            "posterize",
+            "色调分离",
+            "风格化",
+            &[("levels", ParamValue::Number(6.0))],
+        ),
         // ---- 滤镜 ----
         // ---- GPU 加速滤镜（真走 GPU 渲染管线，设备不可用时自动回落 CPU） ----
         filter_node(

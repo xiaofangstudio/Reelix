@@ -45,6 +45,7 @@ export function PropertiesPanel() {
   const track =
     clip && sequence ? sequence.tracks.find((t) => t.id === clip.trackId) : undefined;
   const isLayerClip = !!clip && track?.kind !== "camera";
+  const isCameraClip = !!clip && track?.kind === "camera";
   const isSubtitleClip = !!clip && track?.kind === "subtitle";
   const transform = clip?.transform3D;
 
@@ -193,6 +194,62 @@ export function PropertiesPanel() {
                 >
                   应用到全部片段
                 </button>
+              </div>
+            )}
+
+
+            {/* 音频处理：高通/低通/回声（混音时真滤波，用户要求的传统 DSP） */}
+            {clip && !isCameraClip && (
+              <div className="prop-group">
+                <div className="group-title">音频处理</div>
+                <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
+                  <span className="label">高通 (Hz)</span>
+                  <input
+                    className="value num"
+                    type="number"
+                    min={0}
+                    max={8000}
+                    step={10}
+                    placeholder="0 = 关"
+                    value={clip.audioHighpassHz ?? ""}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      void setAudioDspSafe(clip.id, v > 20 ? v : null, clip.audioLowpassHz ?? null, clip.audioDelayMs ?? null);
+                    }}
+                  />
+                </div>
+                <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
+                  <span className="label">低通 (Hz)</span>
+                  <input
+                    className="value num"
+                    type="number"
+                    min={0}
+                    max={20000}
+                    step={100}
+                    placeholder="0 = 关"
+                    value={clip.audioLowpassHz ?? ""}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      void setAudioDspSafe(clip.id, clip.audioHighpassHz ?? null, v > 20 ? v : null, clip.audioDelayMs ?? null);
+                    }}
+                  />
+                </div>
+                <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
+                  <span className="label">回声 (ms)</span>
+                  <input
+                    className="value num"
+                    type="number"
+                    min={0}
+                    max={2000}
+                    step={10}
+                    placeholder="0 = 关"
+                    value={clip.audioDelayMs ?? ""}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      void setAudioDspSafe(clip.id, clip.audioHighpassHz ?? null, clip.audioLowpassHz ?? null, v > 1 ? v : null);
+                    }}
+                  />
+                </div>
               </div>
             )}
 
@@ -579,4 +636,19 @@ function Vec2Row({
       </div>
     </div>
   );
+}
+
+/** 音频 DSP 防抖落库：失败只弹提示不阻塞输入 */
+async function setAudioDspSafe(
+  clipId: string,
+  hp: number | null,
+  lp: number | null,
+  delay: number | null
+): Promise<void> {
+  try {
+    const { timeline } = await import("../services");
+    await timeline.setAudioDsp(clipId, hp, lp, delay);
+  } catch (err) {
+    useAppStore.getState().pushNotice("error", err instanceof Error ? err.message : String(err));
+  }
 }

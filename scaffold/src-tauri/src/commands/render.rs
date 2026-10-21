@@ -474,12 +474,187 @@ pub(crate) fn apply_transition(
                 None => mix_frames(&color, current, p),
             }
         }
+        // ---- PR 转场家族补全（滑动 / 擦除 / 缩放），全部纯像素操作 ----
+        // 推：前帧整体向左滑出，本帧从右侧推入。
+        "slidePush" => {
+            let Some(prev) = previous else {
+                return mix_frames(&black(), current, p);
+            };
+            slide_frames(prev, current, (p * current.width as f32) as usize, false)
+        }
+        // 拉：本帧从左侧拉入盖住前帧（前帧不动）。
+        "slidePull" => {
+            let Some(prev) = previous else {
+                return mix_frames(&black(), current, p);
+            };
+            slide_frames(prev, current, (p * current.width as f32) as usize, true)
+        }
+        // 线性擦除：分界线从左到右扫过，左边显示本帧。
+        "wipeLinear" => {
+            let Some(prev) = previous else {
+                return mix_frames(&black(), current, p);
+            };
+            wipe_linear(prev, current, p)
+        }
+        // 径向擦除：以画面中心为轴的扇形扫过。
+        "wipeRadial" => {
+            let Some(prev) = previous else {
+                return mix_frames(&black(), current, p);
+            };
+            wipe_radial(prev, current, p)
+        }
+        // 百叶窗：竖向条带依次显现。
+        "wipeBlinds" => {
+            let Some(prev) = previous else {
+                return mix_frames(&black(), current, p);
+            };
+            wipe_blinds(prev, current, p, 8)
+        }
+        // 交叉缩放：前帧放大淡出，本帧从小放大进入。
+        "zoomCross" => {
+            let Some(prev) = previous else {
+                return mix_frames(&black(), current, p);
+            };
+            zoom_cross(prev, current, p)
+        }
         // crossDissolve 与无法识别的类型一律按叠化。
         _ => match previous {
             Some(prev) => mix_frames(prev, current, p),
             None => mix_frames(&black(), current, p),
         },
     }
+}
+
+/// 推 / 拉共用的滑动混合：seam 是分界像素列。
+/// push=false：分界左边是本帧（推入），右边是前帧；
+/// push=true（拉）：分界左边是本帧从左拉入，右边仍是前帧。
+fn slide_frames(prev: &Frame, current: &Frame, seam: usize, pull: bool) -> Frame {
+    if prev.width != current.width || prev.height != current.height {
+        return current.clone();
+    }
+    let seam = seam.min(current.width);
+    let mut out = current.clone();
+    for y in 0..current.height {
+        for x in 0..current.width {
+            let use_current = if pull { x < seam } else { x >= seam };
+            if !use_current {
+                let i = (y * current.width + x) * 4;
+                let j = (y * prev.width + x) * 4;
+                for k in 0..4 {
+                    out.pixels[i + k] = prev.pixels[j + k];
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 线性擦除：x < 分界 → 本帧，否则前帧（带 2px 软边）。
+fn wipe_linear(prev: &Frame, current: &Frame, p: f32) -> Frame {
+    if prev.width != current.width || prev.height != current.height {
+        return current.clone();
+    }
+    let edge = p * current.width as f32;
+    let mut out = current.clone();
+    for y in 0..current.height {
+        for x in 0..current.width {
+            let i = (y * current.width + x) * 4;
+            let d = x as f32 - edge;
+            // 软边 2px 内做线性过渡
+            let w = (d / 2.0).clamp(0.0, 1.0);
+            if w < 1.0 {
+                let j = (y * prev.width + x) * 4;
+                for k in 0..4 {
+                    let c = prev.pixels[j + k];
+                    out.pixels[i + k] = c + (out.pixels[i + k] - c) * w;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 径向擦除：扇形角度内是本帧。以中心为轴、从正上方顺时针扫。
+fn wipe_radial(prev: &Frame, current: &Frame, p: f32) -> Frame {
+    if prev.width != current.width || prev.height != current.height {
+        return current.clone();
+    }
+    let cx = current.width as f32 / 2.0;
+    let cy = current.height as f32 / 2.0;
+    let max_angle = p * std::f32::consts::TAU;
+    let mut out = current.clone();
+    for y in 0..current.height {
+        for x in 0..current.width {
+            let i = (y * current.width + x) * 4;
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            // atan2 以正右方为 0，转到以正上方为 0 的顺时针角
+            let mut a = dy.atan2(dx) + std::f32::consts::FRAC_PI_2;
+            if a < 0.0 {
+                a += std::f32::consts::TAU;
+            }
+            if a > max_angle {
+                let j = (y * prev.width + x) * 4;
+                for k in 0..4 {
+                    out.pixels[i + k] = prev.pixels[j + k];
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 百叶窗：把画面竖切 bands 条，每条按自己的局部进度从上往下显现。
+fn wipe_blinds(prev: &Frame, current: &Frame, p: f32, bands: usize) -> Frame {
+    if prev.width != current.width || prev.height != current.height {
+        return current.clone();
+    }
+    let band_w = (current.width as f32 / bands as f32).ceil() as usize;
+    let mut out = current.clone();
+    for y in 0..current.height {
+        for x in 0..current.width {
+            let band = (x / band_w.max(1)).min(bands - 1);
+            // 每条带错开一点点相位，产生依次扫过的观感
+            let local = ((p * bands as f32) - band as f32).clamp(0.0, 1.0);
+            if (x % band_w.max(1)) as f32 > local * band_w.max(1) as f32 {
+                let i = (y * current.width + x) * 4;
+                let j = (y * prev.width + x) * 4;
+                for k in 0..4 {
+                    out.pixels[i + k] = prev.pixels[j + k];
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 交叉缩放：前帧从 1.0 放大到 1.0 + p*0.6 并淡出；本帧从 0.7 + p*0.3 放大到 1.0 淡入。
+fn zoom_cross(prev: &Frame, current: &Frame, p: f32) -> Frame {
+    let scaled_prev = zoom_frame(prev, 1.0 + p * 0.6);
+    let scaled_cur = zoom_frame(current, 0.7 + p * 0.3);
+    mix_frames(&scaled_prev, &scaled_cur, p)
+}
+
+/// 把帧以中心为轴缩放（超出部分裁掉，缩小部分补透明边——这里补黑边更自然）。
+fn zoom_frame(src: &Frame, scale: f32) -> Frame {
+    let mut out = Frame::filled(src.width, src.height, [0.0, 0.0, 0.0, 1.0]);
+    let cx = src.width as f32 / 2.0;
+    let cy = src.height as f32 / 2.0;
+    let inv = 1.0 / scale.max(0.01);
+    for y in 0..out.height {
+        for x in 0..out.width {
+            let sx = ((x as f32 - cx) * inv + cx) as usize;
+            let sy = ((y as f32 - cy) * inv + cy) as usize;
+            if sx < src.width && sy < src.height {
+                let i = (y * out.width + x) * 4;
+                let j = (sy * src.width + sx) * 4;
+                for k in 0..4 {
+                    out.pixels[i + k] = src.pixels[j + k];
+                }
+            }
+        }
+    }
+    out
 }
 
 /// 线性混合两帧：`weight = 0` 取 `from`，`weight = 1` 取 `to`。
@@ -873,6 +1048,9 @@ mod tests {
             enabled: true,
             label: None,
             transition_in: None,
+                audio_highpass_hz: None,
+                audio_lowpass_hz: None,
+                audio_delay_ms: None,
             audio_fade_in_ms: None,
             audio_fade_out_ms: None,
         });
@@ -1054,6 +1232,9 @@ mod tests {
                 enabled: true,
                 label: None,
                 transition_in,
+                audio_highpass_hz: None,
+                audio_lowpass_hz: None,
+                audio_delay_ms: None,
                 audio_fade_in_ms: None,
                 audio_fade_out_ms: None,
             }

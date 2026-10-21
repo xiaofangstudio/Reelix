@@ -6887,3 +6887,20 @@ input {
   font-size: 10px;
   border-radius: 2px;
 }
+/* 监视器安全框：动作 90%（白）/ 字幕 80%（黄虚线） */
+.monitor-safe {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.monitor-safe.action {
+  margin: 5%;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+
+.monitor-safe.title {
+  margin: 10%;
+  border: 1px dashed rgba(232, 179, 57, 0.65);
+}

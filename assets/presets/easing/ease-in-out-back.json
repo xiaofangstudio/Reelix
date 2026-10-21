@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-in-out-back",
+  "name": "回撤缓入缓出",
+  "nameEn": "ease-in-out-back",
+  "category": "back",
+  "categoryLabel": "回撤",
+  "bezier": [
+    0.68,
+    -0.6,
+    0.32,
+    1.6
+  ],
+  "builtin": false,
+  "note": "两头反向蓄力的对称曲线"
+}

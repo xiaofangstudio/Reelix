@@ -1213,6 +1213,185 @@ fn flag(params: &HashMap<String, ParamValue>, key: &str, default: bool) -> bool 
 /// `source` 是第二路画面，只有「混合 / 合并」这类双输入合成效果才用得到；
 /// 单输入效果直接忽略它。
 /// 未知类型返回 `None`——上层据此报中文错误，而不是静默出一张空帧。
+
+
+// ---------------------------------------------------------------------------
+// 生成类（AE Generate 分类）
+// ---------------------------------------------------------------------------
+
+/// 线性渐变：angle 方向上从 colorA → colorB 铺满整帧（保留原 alpha）。
+pub fn gradient(input: &Frame, color_a: &str, color_b: &str, angle: f32) -> Frame {
+    let a = parse_hex_color(color_a);
+    let b = parse_hex_color(color_b);
+    let mut out = input.clone();
+    let rad = angle.to_radians();
+    let (dx, dy) = (rad.cos(), rad.sin());
+    let (w, h) = (out.width as f32, out.height as f32);
+    let corners = [0.0f32, w * dx, h * dy, w * dx + h * dy];
+    let min = corners.iter().cloned().fold(f32::INFINITY, f32::min);
+    let max = corners.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let span = (max - min).max(1.0);
+    for y in 0..out.height {
+        for x in 0..out.width {
+            let proj = ((x as f32 * dx + y as f32 * dy - min) / span).clamp(0.0, 1.0);
+            let i = (y * out.width + x) * 4;
+            for k in 0..3 {
+                out.pixels[i + k] = a[k] + (b[k] - a[k]) * proj;
+            }
+        }
+    }
+    out
+}
+
+/// 实心圆：中心（归一化 0~1）、半径（相对短边百分比）、颜色、边缘羽化百分比。
+pub fn circle_shape(input: &Frame, cx: f32, cy: f32, radius: f32, color: &str, feather: f32) -> Frame {
+    let c = parse_hex_color(color);
+    let mut out = input.clone();
+    let short = out.width.min(out.height) as f32;
+    let r = (radius / 100.0).clamp(0.001, 4.0) * short;
+    let feather_px = (feather / 100.0 * short).max(0.5);
+    let cx_px = cx.clamp(0.0, 1.0) * out.width as f32;
+    let cy_px = cy.clamp(0.0, 1.0) * out.height as f32;
+    for y in 0..out.height {
+        for x in 0..out.width {
+            let dx = x as f32 - cx_px;
+            let dy = y as f32 - cy_px;
+            let d = (dx * dx + dy * dy).sqrt();
+            let wgt = if d <= r - feather_px {
+                1.0
+            } else if d >= r + feather_px {
+                0.0
+            } else {
+                1.0 - (d - (r - feather_px)) / (2.0 * feather_px)
+            };
+            if wgt > 0.0 {
+                let i = (y * out.width + x) * 4;
+                for k in 0..3 {
+                    out.pixels[i + k] += (c[k] - out.pixels[i + k]) * wgt;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 棋盘格：格宽（像素）、两色交替铺满。
+pub fn checkerboard(input: &Frame, cell: f32, color_a: &str, color_b: &str) -> Frame {
+    let a = parse_hex_color(color_a);
+    let b = parse_hex_color(color_b);
+    let cell = cell.max(2.0) as usize;
+    let mut out = input.clone();
+    for y in 0..out.height {
+        for x in 0..out.width {
+            let on = ((x / cell) + (y / cell)) % 2 == 0;
+            let c = if on { a } else { b };
+            let i = (y * out.width + x) * 4;
+            out.pixels[i] = c[0];
+            out.pixels[i + 1] = c[1];
+            out.pixels[i + 2] = c[2];
+            out.pixels[i + 3] = 1.0;
+        }
+    }
+    out
+}
+
+/// 网格：间距（像素）、线宽、线色。
+pub fn grid_pattern(input: &Frame, spacing: f32, line_width: f32, color: &str) -> Frame {
+    let c = parse_hex_color(color);
+    let spacing = spacing.max(4.0);
+    let lw = (line_width.max(1.0) / 2.0) as i32;
+    let mut out = input.clone();
+    for y in 0..out.height {
+        for x in 0..out.width {
+            let gx = (x as f32 % spacing) as i32;
+            let gy = (y as f32 % spacing) as i32;
+            let near_v = (gx - spacing as i32 / 2).abs() <= lw;
+            let near_h = (gy - spacing as i32 / 2).abs() <= lw;
+            if near_v || near_h {
+                let i = (y * out.width + x) * 4;
+                for k in 0..3 {
+                    out.pixels[i + k] = c[k];
+                }
+                out.pixels[i + 3] = 1.0;
+            }
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// 风格化：查找边缘（Sobel）/ 浮雕 / 色调分离
+// ---------------------------------------------------------------------------
+
+/// 亮度采样（越界取边缘像素）。
+fn luma_at(f: &Frame, x: i32, y: i32) -> f32 {
+    let x = x.clamp(0, f.width as i32 - 1) as usize;
+    let y = y.clamp(0, f.height as i32 - 1) as usize;
+    let i = (y * f.width + x) * 4;
+    luma(f.pixels[i], f.pixels[i + 1], f.pixels[i + 2])
+}
+
+/// 查找边缘：Sobel 梯度模长映射成亮度，invert 时白底黑线。
+pub fn find_edges(input: &Frame, invert: bool) -> Frame {
+    let mut out = input.clone();
+    for y in 0..input.height {
+        for x in 0..input.width {
+            let (xi, yi) = (x as i32, y as i32);
+            let gx = -luma_at(input, xi - 1, yi - 1) - 2.0 * luma_at(input, xi - 1, yi)
+                - luma_at(input, xi - 1, yi + 1)
+                + luma_at(input, xi + 1, yi - 1)
+                + 2.0 * luma_at(input, xi + 1, yi)
+                + luma_at(input, xi + 1, yi + 1);
+            let gy = -luma_at(input, xi - 1, yi - 1) - 2.0 * luma_at(input, xi, yi - 1)
+                - luma_at(input, xi + 1, yi - 1)
+                + luma_at(input, xi - 1, yi + 1)
+                + 2.0 * luma_at(input, xi, yi + 1)
+                + luma_at(input, xi + 1, yi + 1);
+            let mag = ((gx * gx + gy * gy).sqrt() / 4.0).clamp(0.0, 1.0);
+            let v = if invert { 1.0 - mag } else { mag };
+            let i = (y * input.width + x) * 4;
+            out.pixels[i] = v;
+            out.pixels[i + 1] = v;
+            out.pixels[i + 2] = v;
+            out.pixels[i + 3] = input.pixels[i + 3];
+        }
+    }
+    out
+}
+
+/// 浮雕：左上减右下的方向光，加 0.5 灰偏置；strength 百分比 0~300。
+pub fn emboss(input: &Frame, strength: f32) -> Frame {
+    let mut out = input.clone();
+    let s = (strength / 100.0).clamp(0.0, 3.0);
+    for y in 0..input.height {
+        for x in 0..input.width {
+            let (xi, yi) = (x as i32, y as i32);
+            let l = luma_at(input, xi - 1, yi - 1);
+            let r = luma_at(input, xi + 1, yi + 1);
+            let v = ((l - r) * s + 0.5).clamp(0.0, 1.0);
+            let i = (y * input.width + x) * 4;
+            out.pixels[i] = v;
+            out.pixels[i + 1] = v;
+            out.pixels[i + 2] = v;
+            out.pixels[i + 3] = input.pixels[i + 3];
+        }
+    }
+    out
+}
+
+/// 色调分离：每通道量化到 levels 级。
+pub fn posterize(input: &Frame, levels: f32) -> Frame {
+    let n = levels.clamp(2.0, 64.0);
+    let mut out = input.clone();
+    for px in out.pixels.chunks_exact_mut(4) {
+        for k in 0..3 {
+            px[k] = ((px[k] * (n - 1.0)).round() / (n - 1.0)).clamp(0.0, 1.0);
+        }
+    }
+    out
+}
+
+
 pub fn apply(
     effect_type: &str,
     params: &HashMap<String, ParamValue>,
@@ -1259,6 +1438,37 @@ pub fn apply(
             num(params, "shadows", 0.0),
         ),
         "curves" => curves(input, num(params, "strength", 100.0)),
+        // ---- 生成类 ----
+        "gradient" => gradient(
+            input,
+            text(params, "colorA", "#2244cc"),
+            text(params, "colorB", "#ee7722"),
+            num(params, "angle", 90.0),
+        ),
+        "circle" => circle_shape(
+            input,
+            num(params, "centerX", 0.5),
+            num(params, "centerY", 0.5),
+            num(params, "radius", 30.0),
+            text(params, "color", "#ffffff"),
+            num(params, "feather", 5.0),
+        ),
+        "checkerboard" => checkerboard(
+            input,
+            num(params, "cell", 40.0),
+            text(params, "colorA", "#111111"),
+            text(params, "colorB", "#eeeeee"),
+        ),
+        "grid" => grid_pattern(
+            input,
+            num(params, "spacing", 48.0),
+            num(params, "lineWidth", 2.0),
+            text(params, "color", "#33ccff"),
+        ),
+        // ---- 风格化 ----
+        "findEdges" => find_edges(input, flag(params, "invert", false)),
+        "emboss" => emboss(input, num(params, "strength", 100.0)),
+        "posterize" => posterize(input, num(params, "levels", 6.0)),
         "gpuLut" => {
             // GPU 3D LUT（真 GPU）；设备不可用/无表时回落 CPU 版 LUT
             let file = text(params, "file", "");

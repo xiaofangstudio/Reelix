@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-in-circ",
+  "name": "圆弧缓入",
+  "nameEn": "ease-in-circ",
+  "category": "circ",
+  "categoryLabel": "圆弧",
+  "bezier": [
+    0.55,
+    0,
+    1,
+    0.45
+  ],
+  "builtin": false,
+  "note": "圆函数缓入"
+}

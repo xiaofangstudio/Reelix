@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-in-back",
+  "name": "回撤缓入",
+  "nameEn": "ease-in-back",
+  "category": "back",
+  "categoryLabel": "回撤",
+  "bezier": [
+    0.36,
+    0,
+    0.66,
+    -0.56
+  ],
+  "builtin": false,
+  "note": "起步先反向蓄力"
+}

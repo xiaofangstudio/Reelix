@@ -23,6 +23,8 @@ export type EffectCategory =
   | "粒子"
   | "合成"
   | "GPU"
+  | "生成"
+  | "风格化"
   | "输出";
 
 /**
@@ -55,6 +57,13 @@ export type EffectType =
   // 滤镜
   | "gpuGrade"
   | "gpuLut"
+  | "gradient"
+  | "circle"
+  | "checkerboard"
+  | "grid"
+  | "findEdges"
+  | "emboss"
+  | "posterize"
   | "blur"
   | "sharpen"
   | "glow"

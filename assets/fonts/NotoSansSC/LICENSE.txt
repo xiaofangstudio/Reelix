@@ -1,0 +1,11 @@
+【占位文件 —— 这不是许可证正文】
+
+字体：思源黑体（Noto Sans SC）
+上游仓库：https://github.com/notofonts/noto-cjk
+许可证：SIL Open Font License 1.1
+Reserved Font Name：无 —— 子集化后可以保留原名
+
+【补法】从上面的仓库里找到 OFL 许可原文（通常名为 `LICENSE` 或 `OFL.txt`），
+逐字复制过来覆盖本文件的全部内容。不要改写、不要节选、不要自己重写。
+
+【红线】未补齐前，本字体不得随安装包发布。依据：docs/09-3D摄像机与素材库.md 第 3.1 节与第七节。

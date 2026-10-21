@@ -9,7 +9,7 @@
  */
 
 import { useAppStore } from "./appStore";
-import type { Asset, Clip, Id, Project, Track } from "../types/project";
+import type { Asset, Clip, Id, Project, Track, TransitionKind } from "../types/project";
 import type { ProjectSettings } from "../services/project";
 import { audio, dialog, exportApi, generators, graph, history, media, project as projectApi, render as renderApi, subtitle, timeline } from "../services";
 import { rememberRecentProject } from "../core/recentProjects";
@@ -1000,7 +1000,7 @@ export async function setPreviewQuality(scale: number): Promise<boolean> {
 /** 设置片段入场转场（叠化 / 黑场 / 白场）；kind 传 null 清除。 */
 export async function setClipTransition(
   clipId: Id,
-  kind: "crossDissolve" | "dipToBlack" | "dipToWhite" | null,
+  kind: TransitionKind | null,
   durationMs = 500
 ): Promise<boolean> {
   try {

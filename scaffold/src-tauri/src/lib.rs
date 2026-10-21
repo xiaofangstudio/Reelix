@@ -76,6 +76,7 @@ pub fn run() {
             commands::timeline::set_track_flags,
             // 时间线：转场 / 音频淡入淡出 / 标记 / 素材箱
             commands::timeline::set_transition,
+            commands::timeline::set_audio_dsp,
             commands::timeline::set_audio_fade,
             commands::timeline::add_marker,
             commands::timeline::remove_marker,

@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-out-quint",
+  "name": "五次缓出",
+  "nameEn": "ease-out-quint",
+  "category": "quint",
+  "categoryLabel": "五次",
+  "bezier": [
+    0.22,
+    1,
+    0.36,
+    1
+  ],
+  "builtin": false,
+  "note": "五次方减速"
+}

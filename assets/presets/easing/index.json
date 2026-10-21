@@ -1,0 +1,437 @@
+{
+  "schema": "reelix.easing-index/v1",
+  "version": 1,
+  "generatedBy": "scaffold/tools/presets/build_easing.py",
+  "coordinateSystem": "bezier = [x1, y1, x2, y2]，CSS cubic-bezier 控制点；与 scaffold/src/core/curveEval.ts 的 EASING_TANGENTS 同构",
+  "builtinIds": [
+    "linear",
+    "ease-in",
+    "ease-out",
+    "ease-in-out",
+    "bounce",
+    "elastic"
+  ],
+  "count": 30,
+  "items": [
+    {
+      "id": "linear",
+      "name": "线性",
+      "nameEn": "linear",
+      "category": "basic",
+      "categoryLabel": "基础",
+      "bezier": [
+        0,
+        0,
+        1,
+        1
+      ],
+      "builtin": true
+    },
+    {
+      "id": "ease-in",
+      "name": "缓入",
+      "nameEn": "ease-in",
+      "category": "basic",
+      "categoryLabel": "基础",
+      "bezier": [
+        0.42,
+        0,
+        1,
+        1
+      ],
+      "builtin": true
+    },
+    {
+      "id": "ease-out",
+      "name": "缓出",
+      "nameEn": "ease-out",
+      "category": "basic",
+      "categoryLabel": "基础",
+      "bezier": [
+        0,
+        0,
+        0.58,
+        1
+      ],
+      "builtin": true
+    },
+    {
+      "id": "ease-in-out",
+      "name": "缓入缓出",
+      "nameEn": "ease-in-out",
+      "category": "basic",
+      "categoryLabel": "基础",
+      "bezier": [
+        0.42,
+        0,
+        0.58,
+        1
+      ],
+      "builtin": true
+    },
+    {
+      "id": "bounce",
+      "name": "回弹",
+      "nameEn": "bounce",
+      "category": "overshoot",
+      "categoryLabel": "回弹",
+      "bezier": [
+        0.34,
+        1.56,
+        0.64,
+        1
+      ],
+      "builtin": true
+    },
+    {
+      "id": "elastic",
+      "name": "弹性",
+      "nameEn": "elastic",
+      "category": "overshoot",
+      "categoryLabel": "回弹",
+      "bezier": [
+        0.22,
+        1.4,
+        0.36,
+        1
+      ],
+      "builtin": true
+    },
+    {
+      "id": "ease-in-sine",
+      "name": "正弦缓入",
+      "nameEn": "ease-in-sine",
+      "category": "sine",
+      "categoryLabel": "正弦",
+      "bezier": [
+        0.12,
+        0,
+        0.39,
+        0
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-out-sine",
+      "name": "正弦缓出",
+      "nameEn": "ease-out-sine",
+      "category": "sine",
+      "categoryLabel": "正弦",
+      "bezier": [
+        0.61,
+        1,
+        0.88,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-out-sine",
+      "name": "正弦缓入缓出",
+      "nameEn": "ease-in-out-sine",
+      "category": "sine",
+      "categoryLabel": "正弦",
+      "bezier": [
+        0.37,
+        0,
+        0.63,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-quad",
+      "name": "二次缓入",
+      "nameEn": "ease-in-quad",
+      "category": "quad",
+      "categoryLabel": "二次",
+      "bezier": [
+        0.11,
+        0,
+        0.5,
+        0
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-out-quad",
+      "name": "二次缓出",
+      "nameEn": "ease-out-quad",
+      "category": "quad",
+      "categoryLabel": "二次",
+      "bezier": [
+        0.5,
+        1,
+        0.89,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-out-quad",
+      "name": "二次缓入缓出",
+      "nameEn": "ease-in-out-quad",
+      "category": "quad",
+      "categoryLabel": "二次",
+      "bezier": [
+        0.45,
+        0,
+        0.55,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-cubic",
+      "name": "三次缓入",
+      "nameEn": "ease-in-cubic",
+      "category": "cubic",
+      "categoryLabel": "三次",
+      "bezier": [
+        0.32,
+        0,
+        0.67,
+        0
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-out-cubic",
+      "name": "三次缓出",
+      "nameEn": "ease-out-cubic",
+      "category": "cubic",
+      "categoryLabel": "三次",
+      "bezier": [
+        0.33,
+        1,
+        0.68,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-out-cubic",
+      "name": "三次缓入缓出",
+      "nameEn": "ease-in-out-cubic",
+      "category": "cubic",
+      "categoryLabel": "三次",
+      "bezier": [
+        0.65,
+        0,
+        0.35,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-quart",
+      "name": "四次缓入",
+      "nameEn": "ease-in-quart",
+      "category": "quart",
+      "categoryLabel": "四次",
+      "bezier": [
+        0.5,
+        0,
+        0.75,
+        0
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-out-quart",
+      "name": "四次缓出",
+      "nameEn": "ease-out-quart",
+      "category": "quart",
+      "categoryLabel": "四次",
+      "bezier": [
+        0.25,
+        1,
+        0.5,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-out-quart",
+      "name": "四次缓入缓出",
+      "nameEn": "ease-in-out-quart",
+      "category": "quart",
+      "categoryLabel": "四次",
+      "bezier": [
+        0.76,
+        0,
+        0.24,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-quint",
+      "name": "五次缓入",
+      "nameEn": "ease-in-quint",
+      "category": "quint",
+      "categoryLabel": "五次",
+      "bezier": [
+        0.64,
+        0,
+        0.78,
+        0
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-out-quint",
+      "name": "五次缓出",
+      "nameEn": "ease-out-quint",
+      "category": "quint",
+      "categoryLabel": "五次",
+      "bezier": [
+        0.22,
+        1,
+        0.36,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-out-quint",
+      "name": "五次缓入缓出",
+      "nameEn": "ease-in-out-quint",
+      "category": "quint",
+      "categoryLabel": "五次",
+      "bezier": [
+        0.83,
+        0,
+        0.17,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-expo",
+      "name": "指数缓入",
+      "nameEn": "ease-in-expo",
+      "category": "expo",
+      "categoryLabel": "指数",
+      "bezier": [
+        0.7,
+        0,
+        0.84,
+        0
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-out-expo",
+      "name": "指数缓出",
+      "nameEn": "ease-out-expo",
+      "category": "expo",
+      "categoryLabel": "指数",
+      "bezier": [
+        0.16,
+        1,
+        0.3,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-out-expo",
+      "name": "指数缓入缓出",
+      "nameEn": "ease-in-out-expo",
+      "category": "expo",
+      "categoryLabel": "指数",
+      "bezier": [
+        0.87,
+        0,
+        0.13,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-circ",
+      "name": "圆弧缓入",
+      "nameEn": "ease-in-circ",
+      "category": "circ",
+      "categoryLabel": "圆弧",
+      "bezier": [
+        0.55,
+        0,
+        1,
+        0.45
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-out-circ",
+      "name": "圆弧缓出",
+      "nameEn": "ease-out-circ",
+      "category": "circ",
+      "categoryLabel": "圆弧",
+      "bezier": [
+        0,
+        0.55,
+        0.45,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-out-circ",
+      "name": "圆弧缓入缓出",
+      "nameEn": "ease-in-out-circ",
+      "category": "circ",
+      "categoryLabel": "圆弧",
+      "bezier": [
+        0.85,
+        0,
+        0.15,
+        1
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-back",
+      "name": "回撤缓入",
+      "nameEn": "ease-in-back",
+      "category": "back",
+      "categoryLabel": "回撤",
+      "bezier": [
+        0.36,
+        0,
+        0.66,
+        -0.56
+      ],
+      "builtin": false
+    },
+    {
+      "id": "ease-in-out-back",
+      "name": "回撤缓入缓出",
+      "nameEn": "ease-in-out-back",
+      "category": "back",
+      "categoryLabel": "回撤",
+      "bezier": [
+        0.68,
+        -0.6,
+        0.32,
+        1.6
+      ],
+      "builtin": false
+    },
+    {
+      "id": "smooth",
+      "name": "平滑",
+      "nameEn": "smooth",
+      "category": "basic",
+      "categoryLabel": "基础",
+      "bezier": [
+        0.4,
+        0,
+        0.2,
+        1
+      ],
+      "builtin": false
+    }
+  ]
+}

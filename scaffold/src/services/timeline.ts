@@ -137,7 +137,7 @@ export function setAssetBin(assetId: Id, binId: Id | null): Promise<boolean> {
 /** 设置片段入场转场；kind 传 null 清除 */
 export function setTransition(
   clipId: Id,
-  kind: "crossDissolve" | "dipToBlack" | "dipToWhite" | null,
+  kind: import("../types/project").TransitionKind | null,
   durationMs = 500
 ): Promise<boolean> {
   return invoke<boolean>("set_transition", { clipId, kind, durationMs });
@@ -150,4 +150,19 @@ export function setAudioFade(
   fadeOutMs: number
 ): Promise<boolean> {
   return invoke<boolean>("set_audio_fade", { clipId, fadeInMs, fadeOutMs });
+}
+
+/** 设置片段音频 DSP：高通/低通截止 Hz（null 关）、回声延迟 ms（null 关） */
+export function setAudioDsp(
+  clipId: Id,
+  highpassHz: number | null,
+  lowpassHz: number | null,
+  delayMs: number | null
+): Promise<boolean> {
+  return invoke<boolean>("set_audio_dsp", {
+    clipId,
+    highpassHz,
+    lowpassHz,
+    delayMs,
+  });
 }

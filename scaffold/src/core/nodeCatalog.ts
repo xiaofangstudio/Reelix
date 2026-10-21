@@ -30,6 +30,8 @@ export const CATEGORY_SLUG: Record<NodeCategory, string> = {
   合成: "composite",
   摄像机: "camera",
   GPU: "gpu",
+  生成: "generate",
+  风格化: "stylize",
   输出: "output",
 };
 

@@ -253,6 +253,90 @@ export const EFFECT_CATALOG: EffectCatalogEntry[] = [
     ],
   },
 
+  // ---- 生成（纯程序化） ----
+  {
+    type: "gradient",
+    label: "渐变",
+    category: "生成",
+    addable: true,
+    inputs: [IN],
+    outputs: [OUT],
+    params: [
+      { key: "colorA", label: "起始色", value: "#2244cc" },
+      { key: "colorB", label: "结束色", value: "#ee7722" },
+      { key: "angle", label: "角度", value: 90, min: 0, max: 360, step: 1 },
+    ],
+  },
+  {
+    type: "circle",
+    label: "圆",
+    category: "生成",
+    addable: true,
+    inputs: [IN],
+    outputs: [OUT],
+    params: [
+      { key: "centerX", label: "中心 X", value: 0.5, min: 0, max: 1, step: 0.01 },
+      { key: "centerY", label: "中心 Y", value: 0.5, min: 0, max: 1, step: 0.01 },
+      { key: "radius", label: "半径%", value: 30, min: 1, max: 100, step: 1 },
+      { key: "color", label: "颜色", value: "#ffffff" },
+      { key: "feather", label: "羽化%", value: 5, min: 0, max: 50, step: 1 },
+    ],
+  },
+  {
+    type: "checkerboard",
+    label: "棋盘",
+    category: "生成",
+    addable: true,
+    inputs: [IN],
+    outputs: [OUT],
+    params: [
+      { key: "cell", label: "格宽", value: 40, min: 2, max: 200, step: 1 },
+      { key: "colorA", label: "色 A", value: "#111111" },
+      { key: "colorB", label: "色 B", value: "#eeeeee" },
+    ],
+  },
+  {
+    type: "grid",
+    label: "网格",
+    category: "生成",
+    addable: true,
+    inputs: [IN],
+    outputs: [OUT],
+    params: [
+      { key: "spacing", label: "间距", value: 48, min: 4, max: 300, step: 1 },
+      { key: "lineWidth", label: "线宽", value: 2, min: 1, max: 12, step: 1 },
+      { key: "color", label: "线色", value: "#33ccff" },
+    ],
+  },
+  // ---- 风格化 ----
+  {
+    type: "findEdges",
+    label: "查找边缘",
+    category: "风格化",
+    addable: true,
+    inputs: [IN],
+    outputs: [OUT],
+    params: [{ key: "invert", label: "反相", value: false }],
+  },
+  {
+    type: "emboss",
+    label: "浮雕",
+    category: "风格化",
+    addable: true,
+    inputs: [IN],
+    outputs: [OUT],
+    params: [{ key: "strength", label: "强度", value: 100, min: 0, max: 300, step: 5 }],
+  },
+  {
+    type: "posterize",
+    label: "色调分离",
+    category: "风格化",
+    addable: true,
+    inputs: [IN],
+    outputs: [OUT],
+    params: [{ key: "levels", label: "色阶数", value: 6, min: 2, max: 32, step: 1 }],
+  },
+
   // ---- GPU 加速效果（真走 GPU 渲染管线；设备不可用时自动回落 CPU） ----
   {
     type: "gpuGrade",

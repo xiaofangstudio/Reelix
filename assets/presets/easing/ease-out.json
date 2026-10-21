@@ -1,0 +1,16 @@
+{
+  "schema": "reelix.easing/v1",
+  "id": "ease-out",
+  "name": "缓出",
+  "nameEn": "ease-out",
+  "category": "basic",
+  "categoryLabel": "基础",
+  "bezier": [
+    0,
+    0,
+    0.58,
+    1
+  ],
+  "builtin": true,
+  "note": "起步快、结尾慢"
+}

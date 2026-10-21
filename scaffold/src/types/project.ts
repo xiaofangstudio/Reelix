@@ -169,11 +169,24 @@ export interface Clip {
   transitionIn?: { kind: TransitionKind; durationMs: number } | null;
   /** 音频淡入 / 淡出时长（毫秒），仅音频片段使用 */
   audioFadeInMs?: number | null;
+  /** 高通/低通截止 Hz、回声 ms（混音时真滤波） */
+  audioHighpassHz?: number | null;
+  audioLowpassHz?: number | null;
+  audioDelayMs?: number | null;
   audioFadeOutMs?: number | null;
 }
 
 /** 转场类型：由 Rust 合成器实现 */
-export type TransitionKind = "crossDissolve" | "dipToBlack" | "dipToWhite";
+export type TransitionKind =
+  | "crossDissolve"
+  | "dipToBlack"
+  | "dipToWhite"
+  | "slidePush"
+  | "slidePull"
+  | "wipeLinear"
+  | "wipeRadial"
+  | "wipeBlinds"
+  | "zoomCross";
 
 // 从 ./graph 再导出，方便只引 project 的地方也能拿到图类型
 export * from "./graph";
