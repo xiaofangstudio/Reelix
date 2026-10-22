@@ -24,6 +24,7 @@ export type EffectCategory =
   | "合成"
   | "GPU"
   | "生成"
+  | "调色"
   | "风格化"
   | "输出";
 
@@ -64,6 +65,8 @@ export type EffectType =
   | "findEdges"
   | "emboss"
   | "posterize"
+  | "colorWheels"
+  | "levels"
   | "blur"
   | "sharpen"
   | "glow"
@@ -124,6 +127,8 @@ export interface EffectKeyframe {
   timeMs: number;
   value: number;
   easing: EasingPreset;
+  /** 自定义缓动表达式（easing = "expr:..." 时求这个） */
+  easingExpr?: string | null;
   inTangent: { x: number; y: number };
   outTangent: { x: number; y: number };
 }

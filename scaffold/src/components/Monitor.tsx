@@ -195,6 +195,7 @@ export function Monitor() {
           staleUrlRef.current = liveUrlRef.current;
           liveUrlRef.current = url;
           setFrameUrl(url);
+          useAppStore.getState().setMonitorFrameUrl(url);
           setFrameError(null);
         } catch (err) {
           setFrameError(toMessage(err, "这一帧渲染失败"));

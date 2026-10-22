@@ -11,6 +11,7 @@ import { useState } from "react";
 import { useAppStore } from "../store/appStore";
 import { newProject, openProject, openProjectAt } from "../store/projectActions";
 import { loadRecentProjects } from "../core/recentProjects";
+import { openSampleProject } from "../services/sampleProject";
 
 /** 分辨率档位，最后一项是「自定义」 */
 const RESOLUTIONS = [
@@ -239,10 +240,18 @@ export function StartScreen() {
           </div>
         </div>
 
-        {/* 学习：真实外链 */}
+        {/* 学习：示例项目（本地可开，介绍 Reelix 全貌）+ 真实外链 */}
         <div className="start-section">
           <div className="start-section-title">学习</div>
           <div className="start-learn">
+            <button
+              type="button"
+              className="start-learn-link start-sample-btn"
+              title="打开内置示例工程：一条 30 秒的片子，用到了文字/字幕/音频/转场/关键帧/效果栈"
+              onClick={() => void openSampleProject()}
+            >
+              📚 示例项目「30 秒认识 Reelix」
+            </button>
             <a className="start-learn-link" href="https://reelix.xiaofang.studio/docs" target="_blank" rel="noreferrer">
               入门教程
             </a>

@@ -24,6 +24,7 @@ pub mod storage;
 pub mod timeline;
 pub mod tracking;
 pub mod gpu;
+pub mod expr;
 
 #[cfg(feature = "desktop")]
 use state::AppState;
@@ -57,6 +58,11 @@ pub fn run() {
             commands::media::generate_thumbnail,
             commands::generators::new_generator,
             commands::generators::default_media_dir,
+            commands::interop::import_dropbox,
+            commands::interop::dropbox_path,
+            commands::project::home_dir,
+            crate::expr::eval_expr,
+            commands::project::write_text_file,
             commands::generators::list_default_media,
             // 音频：波形 / 录音 / 资源管理器定位
             commands::audio::extract_waveform,

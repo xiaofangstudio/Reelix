@@ -15,7 +15,14 @@ export type EasingPreset =
   | "ease-out"
   | "ease-in-out"
   | "bounce"
-  | "elastic";
+  | "elastic"
+  | "bounce-in"
+  | "bounce-out"
+  | "bounce-in-out"
+  | "elastic-in"
+  | "elastic-out"
+  | "elastic-in-out"
+  | (string & {});
 
 export interface Keyframe {
   id: Id;

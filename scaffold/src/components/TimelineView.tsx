@@ -18,6 +18,9 @@ import type { Asset, Clip, Id, Project, Track } from "../types/project";
 import type { EffectKeyframe } from "../types/effect";
 import type { Keyframe } from "../types/keyframe";
 import { evaluateCurve } from "../core/curveEval";
+import { invoke } from "@tauri-apps/api/core";
+import { registerEasingExpression } from "../core/curveEval";
+import type { EasingPreset } from "../types/keyframe";
 import { msToChinese, msToTimecode, snapToFrame } from "../core/timecode";
 import { assetDragBridge } from "../core/assetDragBridge";
 import { extractWaveform } from "../services/audio";
@@ -79,6 +82,9 @@ const SNAP_PX = 6;
 const TAIL_PADDING_PX = 240;
 /** 判定「这是拖动而不是点击」的像素阈值 */
 const DRAG_PX = 3;
+/** 边缘自动滚动：指针离滚动容器左右边缘这么近就开始滚（剪映同款手感） */
+const EDGE_SCROLL_PX = 28;
+const EDGE_SCROLL_SPEED = 16;
 
 /** 素材类型中文名，时间线角标与提示用 */
 const ASSET_KIND_LABEL: Record<Asset["kind"], string> = {
@@ -313,6 +319,20 @@ function FilmCell({ assetId, timeMs }: { assetId: Id; timeMs: number }) {
  * - 关键帧菱形可以直接拖：横向改时刻（吸附到帧）、纵向改数值；
  * - 播放头竖线与时间线对齐，点行内空白即把播放头挪过去。
  */
+/** 缓动预设中文名（曲线区间标签用） */
+function easingLabel(e: string): string {
+  const table: Record<string, string> = {
+    linear: "线性",
+    "ease-in": "缓入",
+    "ease-out": "缓出",
+    "ease-in-out": "缓入出",
+    bounce: "弹跳",
+    elastic: "弹性",
+  };
+  if (e.startsWith("expr:")) return "表达式";
+  return table[e] ?? e;
+}
+
 const CURVE_ROW_H = 128;
 
 function CurveLane({ clip, pxPerMs }: { clip: Clip; pxPerMs: number }) {
@@ -324,11 +344,14 @@ function CurveLane({ clip, pxPerMs }: { clip: Clip; pxPerMs: number }) {
   const playheadMs = useAppStore((s) => s.playheadMs);
   const setPlayhead = useAppStore((s) => s.setPlayhead);
   const updateEffectKeyframes = useAppStore((s) => s.updateEffectKeyframes);
+  const setKeyframesEasing = useAppStore((s) => s.setKeyframesEasing);
   const setCurveExpanded = useAppStore((s) => s.setCurveExpanded);
   const frameRate = useAppStore((s) => s.project?.sequences[0]?.frameRate ?? 25);
 
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const dragKf = useRef<{ id: Id } | null>(null);
+  /** BLURRR 式：曲线区间右键菜单（选缓动预设） */
+  const [segMenu, setSegMenu] = useState<{ x: number; y: number; leftKfId: Id; effectId: Id } | null>(null);
 
   const clipEffects = effects[clip.id] ?? [];
   const laneKeys = useMemo(
@@ -408,6 +431,83 @@ function CurveLane({ clip, pxPerMs }: { clip: Clip; pxPerMs: number }) {
           ×
         </button>
       </div>
+      {/* 曲线区间右键菜单：缓动预设（曲线/弹性/表达式 三组） */}
+      {segMenu && (
+        <div className="curve-seg-menu" style={{ left: segMenu.x, top: segMenu.y }}>
+          <div className="curve-seg-menu-title">曲线</div>
+          {(["linear", "ease-in", "ease-out", "ease-in-out"] as const).map((e) => (
+            <button
+              key={e}
+              type="button"
+              onClick={() => {
+                const kf = laneKeys.find((k) => k.id === segMenu.leftKfId);
+                if (kf) {
+                  setKeyframesEasing([{ id: kf.id, easing: e }]);
+                }
+                setSegMenu(null);
+              }}
+            >
+              {easingLabel(e)}
+            </button>
+          ))}
+          <div className="curve-seg-menu-title">弹性</div>
+          {(["bounce-out", "elastic-out"] as const).map((e) => (
+            <button
+              key={e}
+              type="button"
+              onClick={() => {
+                const kf = laneKeys.find((k) => k.id === segMenu.leftKfId);
+                if (kf) {
+                  setKeyframesEasing([{ id: kf.id, easing: e }]);
+                }
+                setSegMenu(null);
+              }}
+            >
+              {easingLabel(e).replace("弹跳", "弹跳(出)").replace("弹性", "弹性(出)")}
+            </button>
+          ))}
+          <div className="curve-seg-menu-title">表达式</div>
+          <button
+            type="button"
+            onClick={() => {
+              const expr = window.prompt(
+                "缓动表达式（变量 t ∈ 0~1，例：t*t 或 sin(t*3.14)）",
+                "t*t"
+              );
+              if (expr && expr.trim()) {
+                const kf = laneKeys.find((k) => k.id === segMenu.leftKfId);
+                if (kf) {
+                  // 预采样 100 步存进 EXPR_CACHE（前端直接用，不求值于拖动热路径）
+                  void (async () => {
+                    try {
+                      const samples = new Float32Array(101);
+                      for (let i = 0; i <= 100; i++) {
+                        samples[i] = await invoke<number>("eval_expr", {
+                          text: expr.trim(),
+                          t: i / 100,
+                        });
+                      }
+                      registerEasingExpression(`expr:${expr.trim()}`, samples);
+                      setKeyframesEasing([
+                        { id: kf.id, easing: `expr:${expr.trim()}` as EasingPreset, easingExpr: expr.trim() },
+                      ]);
+                    } catch (err) {
+                      useAppStore
+                        .getState()
+                        .pushNotice("error", err instanceof Error ? err.message : String(err));
+                    }
+                  })();
+                }
+              }
+              setSegMenu(null);
+            }}
+          >
+            自定义表达式…
+          </button>
+        </div>
+      )}
+      {segMenu && <div className="curve-seg-menu-mask" onClick={() => setSegMenu(null)} />}
+
       <div
         ref={bodyRef}
         className="tl-curve-body"
@@ -457,6 +557,47 @@ function CurveLane({ clip, pxPerMs }: { clip: Clip; pxPerMs: number }) {
                 }}
               />
             );
+          })}
+          {/* BLURRR 式区间：两关键帧之间的蓝色半透明带，右键选缓动预设 */}
+          {Array.from(byEffect.entries()).map(([effectId, list]) => {
+            const sorted = list.slice().sort((a, b) => a.timeMs - b.timeMs);
+            return sorted.slice(0, -1).map((k, i) => {
+              const b = sorted[i + 1];
+              const x0 = xOf(k.timeMs);
+              const w = Math.max(2, xOf(b.timeMs) - x0);
+              return (
+                <g key={`seg-${effectId}-${k.id}`}>
+                  <rect
+                    className="tl-curve-seg"
+                    x={x0}
+                    y={2}
+                    width={w}
+                    height={CURVE_ROW_H - 4}
+                    fill="rgba(47, 125, 246, 0.16)"
+                    stroke="rgba(47, 125, 246, 0.35)"
+                    strokeWidth={1}
+                    rx={3}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      selectEffect(effectId);
+                      setSegMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        leftKfId: k.id,
+                        effectId,
+                      });
+                    }}
+                  />
+                  {/* 区间缓动名（缩放小时自动挤没了，不碍事） */}
+                  {w > 54 && (
+                    <text x={x0 + 4} y={14} className="tl-curve-seg-label">
+                      {easingLabel(k.easing)}
+                    </text>
+                  )}
+                </g>
+              );
+            });
           })}
           {laneKeys.map((k) => (
             <g
@@ -602,14 +743,84 @@ export function TimelineView() {
     setDrag(next);
   };
 
+  /**
+   * rAF 节流版 dragBatch：高频 pointermove（拖动播放头 / 裁剪 / 移动）下，
+   * 每帧最多提交一次 state 更新。120Hz 鼠标在 60Hz 屏上白跑一半的 move，
+   * 大工程里一次全量重渲染能到几十毫秒，不节流就会拖影、发粘。
+   * 参数为函数时按最新 session 计算；帧末统一落 ref + setState。
+   */
+  const pendingFrameRef = useRef<number | null>(null);
+  /** V/A 分区高度比例（0.2~0.8）：中间分割线可拖动调整（剪映同款） */
+  const [vaSplit, setVaSplit] = useState(0.55);
+  /**
+   * 播放跟随：播放中播放头快到右边缘时，时间线持续左滚，保持播放头在屏内
+   * （剪映同款；拖动 / 缩放时用户自己掌控，不抢滚动）。
+   */
+  const playing = useAppStore((s) => s.playing);
+  useEffect(() => {
+    if (!playing) return;
+    const id = window.setInterval(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const viewStart = el.scrollLeft / Math.max(0.001, pxPerMs);
+      const x = (playheadMs - viewStart) * pxPerMs;
+      if (x > rect.width - 90) {
+        el.scrollLeft += 28;
+      } else if (x < 30 && el.scrollLeft > 0) {
+        el.scrollLeft -= 28;
+      }
+    }, 100);
+    return () => window.clearInterval(id);
+  }, [playing, playheadMs, pxPerMs]);
+
+  /** 拖动 / 裁剪时的悬浮时刻读数（null = 不显示） */
+  const [dragReadout, setDragReadout] = useState<{ x: number; y: number; text: string } | null>(null);
+
+
+  const scrubWantedMsRef = useRef<number>(0);
+  const scrubWantedRef = useRef<number | null>(null);
+  const dragBatchThrottled = (next: DragSession | ((s: DragSession) => DragSession)) => {
+    dragRef.current =
+      typeof next === "function" ? next(dragRef.current as DragSession) : next;
+    if (pendingFrameRef.current !== null) return;
+    pendingFrameRef.current = requestAnimationFrame(() => {
+      pendingFrameRef.current = null;
+      setDrag(dragRef.current);
+    });
+  };
+  const cancelDragFrame = () => {
+    if (pendingFrameRef.current !== null) {
+      cancelAnimationFrame(pendingFrameRef.current);
+      pendingFrameRef.current = null;
+    }
+  };
+
 
   /** V/A 分批加轨：V 区只加 V 轨，A 区只加 A 轨（用户要求分批） */
+  /** 加轨后把对应分区滚到底：否则新轨和加轨按钮只露一半（用户报的 bug） */
+  const scrollZoneToBottom = (kind: "video" | "audio") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const zone = el.querySelector<HTMLElement>(
+      kind === "video" ? ".tl-zone-v" : ".tl-zone-a"
+    );
+    if (zone) {
+      // 等一帧让新轨渲染出来再滚
+      requestAnimationFrame(() => {
+        zone.scrollTop = zone.scrollHeight;
+      });
+    }
+  };
+
   const addTrackOfKind = async (kind: "video" | "audio") => {
     const seqId = sequenceIdRef.current;
     if (!seqId) return;
     try {
       await timelineApi.addTrack(kind, seqId);
       await refreshProject();
+      // 修 bug：加轨后分区滚到底，否则新轨和「＋新建 X 轨」按钮只露一半
+      scrollZoneToBottom(kind);
     } catch {
       /* 失败时后端已给中文提示，这里安静 */
     }
@@ -745,6 +956,22 @@ export function TimelineView() {
   };
 
   /** 拖动单片段时，指针下方允许落下的轨道（同类型、未锁定、不是原轨） */
+  /**
+   * 边缘自动滚动：拖动（move/trim/scrub）时指针贴近滚动容器左右边缘，
+   * 时间线持续往那个方向滚——长片段拖到画面外时不用先松手去滚轮。
+   * 用 pointer 位置直接算，不建定时器：pointermove 本身就在驱动。
+   */
+  const edgeScroll = (clientX: number) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (clientX - rect.left < EDGE_SCROLL_PX) {
+      el.scrollLeft -= EDGE_SCROLL_SPEED;
+    } else if (rect.right - clientX < EDGE_SCROLL_PX) {
+      el.scrollLeft += EDGE_SCROLL_SPEED;
+    }
+  };
+
   const resolveDropTrack = (clipId: Id, clientY: number): Track | null => {
     const source = sequence.tracks.find((t) => t.clips.some((c) => c.id === clipId));
     if (!source) return null;
@@ -1150,7 +1377,17 @@ export function TimelineView() {
 
     if (session.kind === "scrub") {
       const ms = clamp(clientXToMs(e.clientX), 0, sequence.durationMs);
-      setPlayhead(snapToFrame(ms, frameRate));
+      const at = snapToFrame(ms, frameRate);
+      // 拖动滑块手感：同一帧内的多次 move 只提交最后一次（setPlayhead 直调，
+      // playhead 是 store 切片，Monitor 侧已有 coalescing，不会堆积渲染请求）
+      scrubWantedMsRef.current = at;
+      edgeScroll(e.clientX);
+      if (scrubWantedRef.current === null) {
+        scrubWantedRef.current = requestAnimationFrame(() => {
+          scrubWantedRef.current = null;
+          setPlayhead(scrubWantedMsRef.current);
+        });
+      }
       return;
     }
 
@@ -1170,12 +1407,12 @@ export function TimelineView() {
         w: Math.abs(x1 - x0),
         h: Math.abs(y1 - y0),
       };
-      dragBatch({
+      dragBatchThrottled((session) => ({
         ...session,
         marquee: box,
         marqueeIds: hitTest(box),
         moved: box.w > DRAG_PX || box.h > DRAG_PX,
-      });
+      }));
       return;
     }
 
@@ -1262,6 +1499,43 @@ export function TimelineView() {
     const tolerance = SNAP_PX / pxPerMs;
     let snapMs: number | null = null;
     let bestDiff = tolerance;
+    // 邻片边界钳制（剪映行为）：普通修剪不能盖住同轨相邻片段，
+    // 顶到邻片边缘就停住，并把磁吸线画在边界上给出反馈。
+    const ownerTrack = sequence.tracks.find((tr) =>
+      tr.clips.some((c) => c.id === session.clipId)
+    );
+    if (ownerTrack) {
+      const clip = ownerTrack.clips.find((c) => c.id === session.clipId);
+      if (clip) {
+        if (session.kind === "trim-in") {
+          // 同轨上在本片之前结束的最近一片
+          const prevEnd = ownerTrack.clips
+            .filter((c) => c.id !== clip.id && c.startMs + c.durationMs <= clip.startMs + 0.5)
+            .map((c) => c.startMs + c.durationMs)
+            .reduce((a, b) => (b > a ? b : a), 0.0);
+          if (prevEnd > 0) {
+            const limit = prevEnd - session.baseStart; // 负值：最早只能到 prevEnd
+            if (delta < limit) {
+              delta = limit;
+              snapMs = prevEnd;
+            }
+          }
+        } else if (session.kind === "trim-out") {
+          const nextStart = ownerTrack.clips
+            .filter((c) => c.id !== clip.id && c.startMs >= clip.startMs + clip.durationMs - 0.5)
+            .map((c) => c.startMs)
+            .reduce((a, b) => (a === 0 || b < a ? b : a), Number.MAX_SAFE_INTEGER);
+          if (nextStart < Number.MAX_SAFE_INTEGER) {
+            const limit = nextStart - (session.baseStart + session.baseDuration);
+            if (delta > limit) {
+              delta = limit;
+              snapMs = nextStart;
+            }
+          }
+        }
+      }
+    }
+
     for (const target of snapTargets((id) => id === session.clipId)) {
       const diff = Math.abs(target - (edgeBase + delta));
       if (diff < bestDiff) {
@@ -1280,6 +1554,9 @@ export function TimelineView() {
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
+    // 收尾必须 flush 掉节流帧：否则最后一小段位移不落库（trim 差几毫秒）
+    cancelDragFrame();
+    setDragReadout(null);
     const session = dragRef.current;
     // 空白处单击（没拖起来）：清选中 + 把播放头挪到点击处
     if (!session) {
@@ -1729,7 +2006,7 @@ export function TimelineView() {
               ＋ 新建 V 轨
             </button>
           </div>
-          <div className="tl-gutter-zone tl-gutter-zone-a">
+          <div className="tl-gutter-zone tl-gutter-zone-a" style={{ flex: `1 1 ${(1 - vaSplit) * 100}%` }}>
             {audioRows.map((row) => (
               <div key={row.key} className="tl-gutter-row">
                 {row.tracks.map((track) => (
@@ -1821,6 +2098,15 @@ export function TimelineView() {
         </div>
       </div>
 
+      {/* 拖动 / 裁剪时的悬浮时刻读数（剪映同款） */}
+      {dragReadout && (
+        <div
+          className="tl-drag-readout"
+          style={{ left: dragReadout.x, top: dragReadout.y }}
+        >
+          {dragReadout.text}
+        </div>
+      )}
       <div className="tl-scroll" ref={scrollRef}>        <div
           className={`tl-content${drag ? " dragging" : ""}`}
           ref={contentRef}
@@ -1870,7 +2156,7 @@ export function TimelineView() {
           <div className="tl-zone-hint">
             {/* 轨道从底部往上长；V 区与 A 区各自独立滚动，互不影响 */}
           </div>
-<div className="tl-zone tl-zone-v">
+<div className="tl-zone tl-zone-v" style={{ flex: "1 1 " + vaSplit * 100 + "%" }}>
           <div className="tl-stage">
             {videoRows.map((row) => (
               <div key={row.key} className="tl-row">
@@ -2026,7 +2312,31 @@ export function TimelineView() {
             ))}
           </div>
 </div>
-<div className="tl-zone tl-zone-a">
+<div
+            className="tl-va-divider"
+            title="拖动调整 V / A 分区高度"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              const el = scrollRef.current;
+              if (!el) return;
+              const rect = el.getBoundingClientRect();
+              const base = rect.top;
+              const total = rect.height;
+              const move = (ev: PointerEvent) => {
+                const ratio = (ev.clientY - base) / Math.max(1, total);
+                setVaSplit(Math.min(0.85, Math.max(0.15, ratio)));
+              };
+              const up = () => {
+                window.removeEventListener("pointermove", move);
+                window.removeEventListener("pointerup", up);
+                document.body.classList.remove("resizing-va");
+              };
+              document.body.classList.add("resizing-va");
+              window.addEventListener("pointermove", move);
+              window.addEventListener("pointerup", up);
+            }}
+          />
+          <div className="tl-zone tl-zone-a">
           <div className="tl-stage">
             {audioRows.map((row) => (
               <div key={row.key} className="tl-row">

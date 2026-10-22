@@ -11,8 +11,6 @@ const EASING_TANGENTS: Record<string, [number, number, number, number]> = {
   "ease-in": [0.42, 0, 1, 1],
   "ease-out": [0, 0, 0.58, 1],
   "ease-in-out": [0.42, 0, 0.58, 1],
-  bounce: [0.34, 1.56, 0.64, 1],
-  elastic: [0.22, 1.4, 0.36, 1],
 };
 
 /** 求某时刻的参数值。keyframes 必须按 timeMs 升序 */
@@ -51,7 +49,52 @@ function findSegment(keyframes: Keyframe[], timeMs: number): number {
 }
 
 /** 把归一化时间 t 按缓动预设映射成缓动后的进度 */
+/** 表达式 easing 缓存：key = 表达式原文。求值由后端 expr 引擎做（同步 invoke 不可用，
+ * 所以表达式 easing 在烘曲线时批量预解析成采样表，这里只查表）。 */
+const EXPR_CACHE = new Map<string, Float32Array>();
+
+/** 注册一个表达式 easing 的采样表（100 步）。曲线编辑器在设置表达式时调用。 */
+export function registerEasingExpression(expr: string, samples: Float32Array): void {
+  EXPR_CACHE.set(expr, samples);
+}
+
+/** 弹性（elastic）：起始快、末尾按指数衰减振荡收敛到 1。 */
+function elasticOut(t: number): number {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  const p = 0.4;
+  return Math.pow(2, -9 * t) * Math.sin(((t - p / 4) * (2 * Math.PI)) / p) + 1;
+}
+
+/** 弹跳（bounce）：标准 bounceOut，落两次弹两次。 */
+function bounceOut(t: number): number {
+  const n1 = 7.5625;
+  const d1 = 2.75;
+  if (t < 1 / d1) return n1 * t * t;
+  if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75;
+  if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375;
+  return n1 * (t -= 2.625 / d1) * t + 0.984375;
+}
+
 function applyEasing(t: number, easing: string): number {
+  // 表达式 easing：查预采样表
+  if (easing.startsWith("expr:")) {
+    const table = EXPR_CACHE.get(easing);
+    if (table && table.length > 0) {
+      const x = Math.min(0.9999, Math.max(0, t)) * (table.length - 1);
+      const i = Math.floor(x);
+      const f = x - i;
+      return i + 1 < table.length ? table[i] * (1 - f) + table[i + 1] * f : table[table.length - 1];
+    }
+    return t;
+  }
+  // 真弹性 / 真弹跳（贝塞尔近似不了，用解析函数）
+  if (easing === "elastic-out") return elasticOut(t);
+  if (easing === "elastic-in") return 1 - elasticOut(1 - t);
+  if (easing === "elastic-in-out") return t < 0.5 ? elasticOut(t * 2) / 2 : 1 - elasticOut(2 - t * 2) / 2;
+  if (easing === "bounce-out") return bounceOut(t);
+  if (easing === "bounce-in") return 1 - bounceOut(1 - t);
+  if (easing === "bounce-in-out") return t < 0.5 ? bounceOut(t * 2) / 2 : 1 - bounceOut(2 - t * 2) / 2;
   const c = EASING_TANGENTS[easing] ?? EASING_TANGENTS.linear;
   return cubicBezierY(c[0], c[1], c[2], c[3], t);
 }

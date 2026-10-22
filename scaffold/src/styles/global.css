@@ -5747,7 +5747,7 @@ input {
   width: 14px;
   height: 14px;
   margin: -7px 0 0 -7px;
-  background: #57c08f;
+  background: var(--rl-accent-fill);
   border: 2px solid #e8f0ec;
   border-radius: 50%;
   box-shadow: 0 0 12px rgba(87, 192, 143, 0.8);
@@ -6903,4 +6903,171 @@ input {
 .monitor-safe.title {
   margin: 10%;
   border: 1px dashed rgba(232, 179, 57, 0.65);
+}
+/* ============ 按钮鲜亮化（用户：暗色下太黑、按钮要鲜亮） ============ */
+.btn-primary {
+  background: var(--rl-accent-fill);
+  color: var(--rl-accent-ink);
+  font-weight: 600;
+  border: 1px solid transparent;
+  box-shadow: 0 1px 3px rgba(47, 125, 246, 0.28);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--rl-accent-hover);
+  filter: none;
+  box-shadow: 0 2px 8px rgba(47, 125, 246, 0.36);
+}
+
+.btn-primary:active:not(:disabled) {
+  filter: brightness(0.94);
+}
+
+.btn-ghost {
+  background: var(--rl-surface-2);
+  border: 1px solid var(--rl-border);
+  color: var(--rl-text);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--rl-accent-soft);
+  border-color: var(--rl-accent-line);
+  color: var(--rl-accent);
+}
+
+/* 工具条按钮：更鲜亮的可点性 */
+.editor-tool,
+.ctl {
+  background: var(--rl-surface-2);
+  border: 1px solid var(--rl-border);
+  color: var(--rl-text);
+}
+
+.editor-tool:hover:not(:disabled),
+.ctl:hover:not(:disabled) {
+  background: var(--rl-accent-soft);
+  border-color: var(--rl-accent-line);
+  color: var(--rl-accent);
+}
+
+.editor-tool:disabled,
+.ctl:disabled {
+  opacity: 0.45;
+}
+/* V/A 分割线：可拖动调整分区高度（剪映同款） */
+.tl-va-divider {
+  flex: 0 0 5px;
+  cursor: row-resize;
+  background: var(--rl-border);
+  position: relative;
+  z-index: 4;
+}
+
+.tl-va-divider:hover,
+.tl-va-divider:active {
+  background: var(--rl-accent);
+}
+
+.tl-va-divider::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 28px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--rl-text-faint);
+}
+
+.tl-va-divider:hover::after {
+  background: #ffffff;
+}
+
+body.resizing-va {
+  cursor: row-resize;
+  user-select: none;
+}
+/* ============ 底层手感：浮动时刻读数 / 磁吸线 ============ */
+.tl-drag-readout {
+  position: fixed;
+  z-index: 900;
+  transform: translate(14px, -130%);
+  padding: 3px 8px;
+  font-family: var(--rl-font-mono);
+  font-size: 11px;
+  color: #ffffff;
+  background: var(--rl-accent-fill);
+  border-radius: var(--rl-radius-sm);
+  box-shadow: 0 2px 8px rgba(47, 125, 246, 0.4);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* 吸附命中时画磁吸竖线（剪映同款青色提示线） */
+.tl-snap-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--rl-tint-cyan);
+  box-shadow: 0 0 6px var(--rl-tint-cyan);
+  pointer-events: none;
+  z-index: 5;
+}
+/* ============ BLURRR 式曲线：区间带 / 右键菜单 ============ */
+.tl-curve-seg {
+  cursor: context-menu;
+}
+
+.tl-curve-seg:hover {
+  fill: rgba(47, 125, 246, 0.26);
+}
+
+.tl-curve-seg-label {
+  font-size: 9px;
+  fill: var(--rl-accent);
+  pointer-events: none;
+  font-family: var(--rl-font-ui);
+}
+
+.curve-seg-menu {
+  position: fixed;
+  z-index: 950;
+  min-width: 130px;
+  padding: 4px;
+  background: var(--rl-surface);
+  border: 1px solid var(--rl-border);
+  border-radius: var(--rl-radius);
+  box-shadow: var(--rl-shadow-pop);
+}
+
+.curve-seg-menu-title {
+  padding: 4px 8px 2px;
+  font-size: 10px;
+  color: var(--rl-text-faint);
+}
+
+.curve-seg-menu button {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  text-align: left;
+  color: var(--rl-text);
+  background: transparent;
+  border: none;
+  border-radius: var(--rl-radius-sm);
+  cursor: pointer;
+}
+
+.curve-seg-menu button:hover {
+  background: var(--rl-accent-soft);
+  color: var(--rl-accent);
+}
+
+.curve-seg-menu-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 940;
 }

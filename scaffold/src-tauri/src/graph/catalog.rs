@@ -293,6 +293,31 @@ pub fn node_catalog() -> Vec<NodeTypeInfo> {
             &[("strength", ParamValue::Number(100.0))],
         ),
         filter_node(
+            "colorWheels",
+            "色轮",
+            "调色",
+            &[
+                ("liftX", ParamValue::Number(0.0)),
+                ("liftY", ParamValue::Number(0.0)),
+                ("gammaX", ParamValue::Number(0.0)),
+                ("gammaY", ParamValue::Number(0.0)),
+                ("gainX", ParamValue::Number(0.0)),
+                ("gainY", ParamValue::Number(0.0)),
+            ],
+        ),
+        filter_node(
+            "levels",
+            "色阶",
+            "调色",
+            &[
+                ("inLow", ParamValue::Number(0.0)),
+                ("inHigh", ParamValue::Number(1.0)),
+                ("gamma", ParamValue::Number(1.0)),
+                ("outLow", ParamValue::Number(0.0)),
+                ("outHigh", ParamValue::Number(1.0)),
+            ],
+        ),
+        filter_node(
             "posterize",
             "色调分离",
             "风格化",

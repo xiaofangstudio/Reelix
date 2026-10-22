@@ -138,3 +138,21 @@ pub fn adapt_sequence_to_asset(
     *lock(&state.project)? = Some(project.clone());
     Ok(project)
 }
+
+/// 用户主目录（示例工程放 Documents 用）。
+#[tauri::command]
+pub fn home_dir() -> Result<String, String> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(|v| v.to_string_lossy().into_owned())
+        .ok_or_else(|| "定位不到主目录".to_string())
+}
+
+/// 写一个文本文件（示例工程生成用；只写用户给的绝对路径）。
+#[tauri::command]
+pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
+    }
+    std::fs::write(&path, contents).map_err(|e| format!("写文件失败：{e}"))
+}

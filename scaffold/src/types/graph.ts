@@ -79,6 +79,7 @@ export type NodeCategory =
   | "摄像机"
   | "GPU"
   | "生成"
+  | "调色"
   | "风格化"
   | "输出";
 

@@ -7,6 +7,13 @@ dist-ssr/
 src-tauri/target/
 src-tauri/gen/
 
+# MCP 服务的构建产物
+reelix-mcp/target/
+
+# 一次性修补脚本
+patch-*.cjs
+*.patch.tmp
+
 # FFmpeg 动态库，不入库
 src-tauri/ffmpeg/
 

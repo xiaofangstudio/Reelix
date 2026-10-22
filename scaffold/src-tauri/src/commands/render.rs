@@ -74,6 +74,17 @@ pub(crate) struct FramePlan {
     pub source_key: Option<String>,
     /// 片段入场转场：当前时刻落在转场窗口内时才有值。
     pub transition: Option<TransitionPlan>,
+    /// 3D 图层变换（片段启用 3D 时带上；渲染时真作用于画面）。
+    pub transform_3d: Option<crate::graph::effects::Transform3D>,
+    /// 景深参数（摄像机片段提供；缺省不做模糊）。
+    pub depth_of_field: Option<DepthOfField>,
+}
+
+/// 景深：合焦平面 Z + 最大模糊强度（像素）。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DepthOfField {
+    pub focus_z: f32,
+    pub strength: f32,
 }
 
 /// 一帧的入场转场计划：前片段画面来源与混合进度。
@@ -308,6 +319,17 @@ pub(crate) fn plan_frame(
     let source = hit.and_then(|clip| clip_source(project, clip, time_ms));
     let source_key = hit.and_then(|clip| clip_source_key(project, clip));
     let transition = hit.and_then(|clip| plan_transition(sequence, project, clip, snapped_ms));
+    // 3D 变换：命中片段且启用了 3D 才带上；摄像机片段不占画面（它的变换是全局取景，
+    // 由后续迭代接），这里只对图层片段生效。
+    let transform_3d = hit
+        .filter(|clip| clip.enable_3d && clip.transform_3d.is_some())
+        .and_then(|clip| clip.transform_3d.as_ref())
+        .map(|t| crate::graph::effects::Transform3D {
+            position: [t.position.x as f32, t.position.y as f32, t.position.z as f32],
+            rotation: [t.rotation.x as f32, t.rotation.y as f32, t.rotation.z as f32],
+            scale: t.scale as f32,
+            anchor: [t.anchor.x as f32, t.anchor.y as f32],
+        });
 
     Ok(FramePlan {
         width,
@@ -318,6 +340,8 @@ pub(crate) fn plan_frame(
         source,
         source_key,
         transition,
+        transform_3d,
+        depth_of_field: None,
     })
 }
 
@@ -420,6 +444,22 @@ pub(crate) fn render_plan(plan: &FramePlan) -> Result<Frame, String> {
     };
     if !plan.order.is_empty() {
         frame = composite(&plan.graph, &plan.order, frame);
+    }
+
+    // 3D 图层变换真渲染：启用 3D 的片段，其 XYZ 位置/缩放/Z 旋转/锚点
+    // 在这一步作用到画面上（移出画布的部分变透明）。以前这里直接跳过，
+    // 导致 3D 开关、XYZ、旋转全是“存了数据不生效”的假功能。
+    if let Some(tf) = &plan.transform_3d {
+        frame = crate::graph::effects::transform3d(&frame, tf);
+        // 景深：Z 偏离合焦面时按强度模糊（焦点默认 z=0）
+        if let Some(dof) = &plan.depth_of_field {
+            frame = crate::graph::effects::depth_of_field(
+                &frame,
+                tf.position[2],
+                dof.focus_z,
+                dof.strength,
+            );
+        }
     }
 
     let Some(transition) = &plan.transition else {

@@ -34,6 +34,7 @@ import { ExportPage } from "./components/ExportPage";
 import { RecordingPanel } from "./components/RecordingPanel";
 import { StartScreen } from "./components/StartScreen";
 import { useAppStore } from "./store/appStore";
+import { importDropbox } from "./services/interop";
 import type { PageTab, ToolKind } from "./store/appStore";
 import {
   bootstrapProject,
@@ -104,6 +105,26 @@ export function App() {
   // 启动时问一次后端：已经打开工程就回填，否则进入「未打开」引导态
   useEffect(() => {
     void bootstrapProject();
+  }, []);
+
+  // Strata 联动：每 3 秒扫一次投递箱（Strata 把改好的 PNG 写进来），
+  // 有就自动导入素材箱并弹提示。窗口重新获得焦点时也立刻扫一次。
+  useEffect(() => {
+    const scan = async () => {
+      try {
+        const n = await importDropbox();
+        if (n > 0) {
+          useAppStore.getState().pushNotice("info", `Strata 送来 ${n} 张图，已进素材箱`);
+        }
+      } catch {
+        /* 没开工程等场景安静失败 */
+      }
+    };
+    const timer = window.setInterval(() => void scan(), 3000);
+    window.addEventListener("focus", () => void scan());
+    return () => {
+      window.clearInterval(timer);
+    };
   }, []);
 
   // 全局订阅导出进度：任务跨页面存活，进度进 store，顶栏与导出页共用
@@ -192,6 +213,40 @@ export function App() {
 
       // 工具快捷键（照 EC 参考：同一个键在组内循环）
       // V 选择组 / A 轨道选择 / B 波纹组 / C 剃刀 / Y 滑移组 / P 钢笔 / H 抓手组 / T 文字 / Z 缩放
+      // S 在播放头处切割（剪映同款，比 Ctrl+K 更快）
+      if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (state.selectedClipIds.length > 0) {
+          e.preventDefault();
+          void splitAtPlayhead();
+          return;
+        }
+      }
+      // Ctrl 组合快捷键（剪映基础组）
+      if (e.ctrlKey || e.metaKey) {
+        const key = e.key.toLowerCase();
+        if (key === "c") {
+          e.preventDefault();
+          state.copyClips();
+          return;
+        }
+        if (key === "v") {
+          e.preventDefault();
+          void state.pasteClips();
+          return;
+        }
+        if (key === "a") {
+          e.preventDefault();
+          state.selectAllClips();
+          return;
+        }
+        if (key === "d") {
+          // Ctrl+D = 复制并粘贴（剪映的快速复制）
+          e.preventDefault();
+          state.copyClips();
+          void state.pasteClips();
+          return;
+        }
+      }
       const TOOL_CYCLES: Record<string, ToolKind[]> = {
         v: ["selection", "trackSelectForward", "trackSelectBackward"],
         a: ["trackSelectForward", "trackSelectBackward", "selection"],

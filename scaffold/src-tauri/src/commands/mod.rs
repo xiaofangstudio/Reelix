@@ -7,6 +7,7 @@ pub mod audio;
 pub mod dialog;
 pub mod export;
 pub mod generators;
+pub mod interop;
 pub mod graph;
 pub mod history;
 pub mod keyframe;

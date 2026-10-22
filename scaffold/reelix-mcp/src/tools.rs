@@ -89,6 +89,15 @@ fn opt_f64(args: &Value, key: &str, fallback: f64) -> f64 {
     args.get(key).and_then(|v| v.as_f64()).unwrap_or(fallback)
 }
 
+/// 取一个必须存在的数字参数（没有返回 None）。
+fn opt_f64_required(args: &Value, key: &str) -> Option<f64> {
+    args.get(key).and_then(Value::as_f64)
+}
+
+fn opt_bool(args: &Value, key: &str) -> Option<bool> {
+    args.get(key).and_then(Value::as_bool)
+}
+
 fn opt_str(args: &Value, key: &str) -> Option<String> {
     args.get(key).and_then(|v| v.as_str()).map(str::to_string)
 }
@@ -306,6 +315,108 @@ pub fn catalog() -> Vec<Tool> {
             description: "只探测一个媒体文件，不登记进工程：时长、分辨率、帧率、编码、有无音轨。",
             schema: schema(json!({ "path": p_str("媒体文件路径") }), &["path"]),
         },
+        // ---- AI 剪辑工具组（片段 / 轨道 / 转场 / 编组 / 3D / 字幕） ----
+        Tool {
+            name: "add_clip",
+            description: "把一个素材作为片段铺到时间线（自动落对轨：视频→V、音频→A）。",
+            schema: schema(
+                json!({
+                    "assetId": p_str("素材 id（list_assets 拿）"),
+                    "trackId": p_str("目标轨道 id；缺省自动选"),
+                    "startMs": p_num("起始毫秒；缺省追加到该轨末尾"),
+                    "durationMs": p_num("时长毫秒；缺省用素材全长"),
+                }),
+                &["assetId"],
+            ),
+        },
+        Tool {
+            name: "move_clip",
+            description: "移动片段到新时刻 / 新轨道。",
+            schema: schema(
+                json!({
+                    "clipId": p_str("片段 id"),
+                    "startMs": p_num("新起始毫秒"),
+                    "trackId": p_str("新轨道 id，可选"),
+                }),
+                &["clipId"],
+            ),
+        },
+        Tool {
+            name: "trim_clip",
+            description: "裁剪片段：改入点 / 出点 / 起始时刻（会同步时长）。",
+            schema: schema(
+                json!({
+                    "clipId": p_str("片段 id"),
+                    "inMs": p_num("新入点（素材内毫秒）"),
+                    "outMs": p_num("新出点（素材内毫秒）"),
+                    "startMs": p_num("新起始毫秒，可选"),
+                }),
+                &["clipId"],
+            ),
+        },
+        Tool {
+            name: "split_clip",
+            description: "在指定时刻把片段切成两段（时刻默认用播放头，但本工具是离线会话，必须显式给）。",
+            schema: schema(
+                json!({ "clipId": p_str("片段 id"), "atMs": p_num("切割时刻（毫秒）") }),
+                &["clipId", "atMs"],
+            ),
+        },
+        Tool {
+            name: "delete_clip",
+            description: "从时间线删除片段。",
+            schema: schema(json!({ "clipId": p_str("片段 id") }), &["clipId"]),
+        },
+        Tool {
+            name: "set_transition",
+            description: "给片段加入场转场：crossDissolve / dipToBlack / dipToWhite / slidePush / slidePull / wipeLinear / wipeRadial / wipeBlinds / zoomCross；kind 传 none 清除。",
+            schema: schema(
+                json!({
+                    "clipId": p_str("片段 id"),
+                    "kind": p_str("转场类型，none = 清除"),
+                    "durationMs": p_num("转场时长毫秒，缺省 500"),
+                }),
+                &["clipId", "kind"],
+            ),
+        },
+        Tool {
+            name: "add_track",
+            description: "新增一条轨道（video / audio / subtitle / camera）。",
+            schema: schema(json!({ "kind": p_str("轨道类型") }), &["kind"]),
+        },
+        Tool {
+            name: "nest_clips",
+            description: "把多个片段合并成一个编组（compound），整体移动与变换。",
+            schema: schema(json!({ "clipIds": p_str("片段 id 数组，至少 2 个") }), &["clipIds"]),
+        },
+        Tool {
+            name: "set_clip_3d",
+            description: "启用 / 关闭片段 3D，或改其 XYZ 位置 / 缩放 / Z 旋转（度）。",
+            schema: schema(
+                json!({
+                    "clipId": p_str("片段 id"),
+                    "enabled": p_bool("是否启用 3D"),
+                    "x": p_num("位置 X（像素）"),
+                    "y": p_num("位置 Y（像素）"),
+                    "z": p_num("位置 Z（景深用）"),
+                    "scale": p_num("缩放，1 = 原大"),
+                    "rotationZ": p_num("Z 轴旋转（度）"),
+                }),
+                &["clipId"],
+            ),
+        },
+        Tool {
+            name: "add_subtitle",
+            description: "在字幕轨加一条字幕（没有字幕轨会自动建）。",
+            schema: schema(
+                json!({
+                    "text": p_str("字幕文字"),
+                    "startMs": p_num("起始毫秒"),
+                    "durationMs": p_num("时长毫秒，缺省 3000"),
+                }),
+                &["text", "startMs"],
+            ),
+        },
     ]
 }
 
@@ -330,6 +441,16 @@ pub fn call(session: &mut Session, name: &str, args: &Value) -> Result<Value, St
         "open_project" => open_project(session, args),
         "import_media" => import_media(session, args),
         "probe_media" => probe_media(args),
+        "add_clip" => add_clip(session, args),
+        "move_clip" => move_clip(session, args),
+        "trim_clip" => trim_clip(session, args),
+        "split_clip" => split_clip(session, args),
+        "delete_clip" => delete_clip(session, args),
+        "set_transition" => mcp_set_transition(session, args),
+        "add_track" => mcp_add_track(session, args),
+        "nest_clips" => mcp_nest_clips(session, args),
+        "set_clip_3d" => mcp_set_clip_3d(session, args),
+        "add_subtitle" => mcp_add_subtitle(session, args),
         other => Err(format!("未知工具：{other}")),
     }
 }
@@ -594,6 +715,7 @@ fn import_media(session: &mut Session, args: &Value) -> Result<Value, String> {
         codec: info.codec.clone(),
         has_audio: info.has_audio,
         missing: false,
+        bin_id: None,
     });
 
     let mut clip_id: Option<String> = None;
@@ -646,6 +768,15 @@ fn import_media(session: &mut Session, args: &Value) -> Result<Value, String> {
                 compound_id: None,
                 enable_3d: false,
                 transform_3d: None,
+                transition_in: None,
+                audio_fade_in_ms: None,
+                audio_fade_out_ms: None,
+                audio_highpass_hz: None,
+                audio_lowpass_hz: None,
+                audio_delay_ms: None,
+                text: None,
+                label: None,
+                enabled: true,
             };
             clip_id = Some(clip.id.clone());
             track.clips.push(clip);
@@ -660,6 +791,402 @@ fn import_media(session: &mut Session, args: &Value) -> Result<Value, String> {
         "clipId": clip_id,
         "hasAudio": info.has_audio,
     }))
+}
+
+
+// ---------------------------------------------------------------- AI 剪辑工具实现
+
+/// 找片段所在轨与下标。
+fn locate_clip(project: &Project, clip_id: &str) -> Result<(String, usize), String> {
+    for seq in &project.sequences {
+        for track in &seq.tracks {
+            if let Some(i) = track.clips.iter().position(|c| c.id == clip_id) {
+                return Ok((track.id.clone(), i));
+            }
+        }
+    }
+    Err(format!("找不到片段「{clip_id}」"))
+}
+
+/// 给素材选一条合适的轨：指定轨类型匹配就用；否则找同类型第一条未锁轨。
+fn pick_track_for_asset(project: &Project, asset_kind: &str, prefer: Option<&str>) -> Option<String> {
+    let want: TrackKind = if asset_kind == "audio" {
+        TrackKind::Audio
+    } else {
+        TrackKind::Video
+    };
+    let seq = project.sequences.first()?;
+    if let Some(id) = prefer {
+        if let Some(t) = seq.tracks.iter().find(|t| t.id == id && t.kind == want && !t.locked) {
+            return Some(t.id.clone());
+        }
+    }
+    seq.tracks
+        .iter()
+        .find(|t| t.kind == want && !t.locked)
+        .map(|t| t.id.clone())
+}
+
+fn add_clip(session: &mut Session, args: &Value) -> Result<Value, String> {
+    let asset_id = need_str(args, "assetId")?;
+    let project = session.project_mut()?;
+    let asset = project
+        .assets
+        .iter()
+        .find(|a| a.id == asset_id)
+        .ok_or_else(|| format!("找不到素材「{asset_id}」"))?
+        .clone();
+    let kind = format!("{:?}", asset.kind).to_lowercase();
+    let track_id = pick_track_for_asset(project, &kind, opt_str(args, "trackId").as_deref())
+        .ok_or_else(|| "没有可用的轨道".to_string())?;
+    let duration = opt_f64(args, "durationMs", asset.duration_ms);
+    let start = match opt_f64_required(args, "startMs") {
+        Some(v) => v,
+        None => {
+            // 缺省：追加到该轨末尾
+            let seq = &project.sequences[0];
+            let track = seq.tracks.iter().find(|t| t.id == track_id).ok_or("轨道消失")?;
+            track
+                .clips
+                .iter()
+                .map(|c| c.start_ms + c.duration_ms)
+                .fold(0.0, f64::max)
+        }
+    };
+    let clip = Clip {
+        id: new_id("clip"),
+        asset_id,
+        track_id: track_id.clone(),
+        start_ms: start,
+        duration_ms: duration.max(1.0),
+        in_ms: 0.0,
+        out_ms: duration.max(1.0),
+        speed: 1.0,
+        reversed: false,
+        node_id: String::new(),
+        compound_id: None,
+        enable_3d: false,
+        transform_3d: None,
+        transition_in: None,
+        audio_fade_in_ms: None,
+        audio_fade_out_ms: None,
+        audio_highpass_hz: None,
+        audio_lowpass_hz: None,
+        audio_delay_ms: None,
+        text: None,
+        label: None,
+        enabled: true,
+    };
+    let seq = &mut project.sequences[0];
+    let track = seq
+        .tracks
+        .iter_mut()
+        .find(|t| t.id == track_id)
+        .ok_or("轨道消失")?;
+    track.clips.push(clip.clone());
+    track.clips
+        .sort_by(|a, b| a.start_ms.partial_cmp(&b.start_ms).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(json!({ "clipId": clip.id, "trackId": track_id, "startMs": clip.start_ms }))
+}
+
+fn move_clip(session: &mut Session, args: &Value) -> Result<Value, String> {
+    let clip_id = need_str(args, "clipId")?;
+    let project = session.project_mut()?;
+    let (track_id, idx) = locate_clip(project, &clip_id)?;
+    {
+        let seq = &mut project.sequences[0];
+        let track = seq.tracks.iter_mut().find(|t| t.id == track_id).ok_or("轨道消失")?;
+        let c = track.clips.get_mut(idx).ok_or("片段消失")?;
+        if let Some(v) = opt_f64_required(args, "startMs") {
+            c.start_ms = v.max(0.0);
+        }
+    }
+    // 换轨
+    if let Some(to) = opt_str(args, "trackId") {
+        let seq = &mut project.sequences[0];
+        let src_kind = seq
+            .tracks
+            .iter()
+            .find(|t| t.id == track_id)
+            .map(|t| t.kind.clone());
+        let removed = {
+            let src = seq.tracks.iter_mut().find(|t| t.id == track_id).ok_or("源轨消失")?;
+            src.clips.remove(idx)
+        };
+        if let Some(dst) = seq
+            .tracks
+            .iter_mut()
+            .find(|t| t.id == to && Some(t.kind.clone()) == src_kind)
+        {
+            dst.clips.push(removed);
+            dst.clips.sort_by(|a, b| {
+                a.start_ms.partial_cmp(&b.start_ms).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+    }
+    Ok(json!({ "ok": true }))
+}
+
+fn trim_clip(session: &mut Session, args: &Value) -> Result<Value, String> {
+    let clip_id = need_str(args, "clipId")?;
+    let project = session.project_mut()?;
+    let (track_id, idx) = locate_clip(project, &clip_id)?;
+    let seq = &mut project.sequences[0];
+    let track = seq.tracks.iter_mut().find(|t| t.id == track_id).ok_or("轨道消失")?;
+    let c = track.clips.get_mut(idx).ok_or("片段消失")?;
+    if let Some(v) = opt_f64_required(args, "startMs") {
+        c.start_ms = v.max(0.0);
+    }
+    if let Some(v) = opt_f64_required(args, "inMs") {
+        c.in_ms = v.max(0.0);
+    }
+    if let Some(v) = opt_f64_required(args, "outMs") {
+        c.out_ms = v.max(c.in_ms + 1.0);
+    }
+    c.duration_ms = c.out_ms - c.in_ms;
+    Ok(json!({ "ok": true, "durationMs": c.duration_ms }))
+}
+
+fn split_clip(session: &mut Session, args: &Value) -> Result<Value, String> {
+    let clip_id = need_str(args, "clipId")?;
+    let at = opt_f64_required(args, "atMs").ok_or("split_clip 需要 atMs")?;
+    let project = session.project_mut()?;
+    let (track_id, idx) = locate_clip(project, &clip_id)?;
+    let seq = &mut project.sequences[0];
+    let track = seq.tracks.iter_mut().find(|t| t.id == track_id).ok_or("轨道消失")?;
+    let c = track.clips.get(idx).ok_or("片段消失")?.clone();
+    let local = at - c.start_ms;
+    if local <= 1.0 || local >= c.duration_ms - 1.0 {
+        return Err("切割点必须落在片段内部（离两端至少 1ms）".into());
+    }
+    let right = Clip {
+        id: new_id("clip"),
+        asset_id: c.asset_id.clone(),
+        track_id: c.track_id.clone(),
+        start_ms: at,
+        duration_ms: c.duration_ms - local,
+        in_ms: c.in_ms + local,
+        out_ms: c.out_ms,
+        speed: c.speed,
+        reversed: c.reversed,
+        node_id: c.node_id.clone(),
+        compound_id: c.compound_id.clone(),
+        enable_3d: false,
+        transform_3d: None,
+        transition_in: None,
+        audio_fade_in_ms: None,
+        audio_fade_out_ms: None,
+        audio_highpass_hz: None,
+        audio_lowpass_hz: None,
+        audio_delay_ms: None,
+        text: None,
+        label: None,
+        enabled: true,
+    };
+    let left = track.clips.get_mut(idx).ok_or("片段消失")?;
+    left.duration_ms = local;
+    left.out_ms = c.in_ms + local;
+    track.clips.push(right.clone());
+    track.clips.sort_by(|a, b| {
+        a.start_ms.partial_cmp(&b.start_ms).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(json!({ "leftId": c.id, "rightId": right.id }))
+}
+
+fn delete_clip(session: &mut Session, args: &Value) -> Result<Value, String> {
+    let clip_id = need_str(args, "clipId")?;
+    let project = session.project_mut()?;
+    let (track_id, idx) = locate_clip(project, &clip_id)?;
+    let seq = &mut project.sequences[0];
+    let track = seq.tracks.iter_mut().find(|t| t.id == track_id).ok_or("轨道消失")?;
+    track.clips.remove(idx);
+    Ok(json!({ "ok": true }))
+}
+
+fn mcp_set_transition(session: &mut Session, args: &Value) -> Result<Value, String> {
+    let clip_id = need_str(args, "clipId")?;
+    let kind = need_str(args, "kind")?;
+    let duration = opt_f64(args, "durationMs", 500.0);
+    let project = session.project_mut()?;
+    let (track_id, idx) = locate_clip(project, &clip_id)?;
+    let seq = &mut project.sequences[0];
+    let track = seq.tracks.iter_mut().find(|t| t.id == track_id).ok_or("轨道消失")?;
+    let c = track.clips.get_mut(idx).ok_or("片段消失")?;
+    if kind == "none" || kind.is_empty() {
+        c.transition_in = None;
+    } else {
+        let allowed = [
+            "crossDissolve", "dipToBlack", "dipToWhite", "slidePush", "slidePull",
+            "wipeLinear", "wipeRadial", "wipeBlinds", "zoomCross",
+        ];
+        if !allowed.contains(&kind.as_str()) {
+            return Err(format!("不支持的转场类型：{kind}"));
+        }
+        let max = c.duration_ms.max(1.0);
+        c.transition_in = Some(reelix_lib::timeline::model::Transition {
+            kind,
+            duration_ms: duration.clamp(1.0, max),
+        });
+    }
+    Ok(json!({ "ok": true }))
+}
+
+fn mcp_add_track(session: &mut Session, args: &Value) -> Result<Value, String> {
+    let kind = need_str(args, "kind")?;
+    let project = session.project_mut()?;
+    let seq = &mut project.sequences[0];
+    let kind = match kind.as_str() {
+        "video" => TrackKind::Video,
+        "audio" => TrackKind::Audio,
+        "subtitle" => TrackKind::Subtitle,
+        "camera" => TrackKind::Camera,
+        other => return Err(format!("不支持的轨道类型：{other}")),
+    };
+    let index = seq
+        .tracks
+        .iter()
+        .filter(|t| t.kind == kind)
+        .map(|t| t.index)
+        .max()
+        .map(|v| v + 1)
+        .unwrap_or(0);
+    let track = reelix_lib::timeline::model::Track {
+        id: new_id("track"),
+        kind,
+        index,
+        muted: false,
+        solo: false,
+        locked: false,
+        hidden: false,
+        height: if matches!(kind, TrackKind::Audio) { 48.0 } else { 64.0 },
+        clips: vec![],
+    };
+    let id = track.id.clone();
+    seq.tracks.push(track);
+    Ok(json!({ "trackId": id }))
+}
+
+fn mcp_nest_clips(session: &mut Session, args: &Value) -> Result<Value, String> {
+    let ids = args
+        .get("clipIds")
+        .and_then(Value::as_array)
+        .ok_or("nest_clips 需要 clipIds 数组")?;
+    if ids.len() < 2 {
+        return Err("编组至少 2 个片段".into());
+    }
+    let project = session.project_mut()?;
+    let group = new_id("compound");
+    let mut n = 0;
+    for v in ids {
+        let id = v.as_str().ok_or("clipIds 必须是字符串数组")?;
+        let (track_id, idx) = locate_clip(project, id)?;
+        let seq = &mut project.sequences[0];
+        let track = seq.tracks.iter_mut().find(|t| t.id == track_id).ok_or("轨道消失")?;
+        if let Some(c) = track.clips.get_mut(idx) {
+            c.compound_id = Some(group.clone());
+            n += 1;
+        }
+    }
+    Ok(json!({ "compoundId": group, "count": n }))
+}
+
+fn mcp_set_clip_3d(session: &mut Session, args: &Value) -> Result<Value, String> {
+    let clip_id = need_str(args, "clipId")?;
+    let project = session.project_mut()?;
+    let (track_id, idx) = locate_clip(project, &clip_id)?;
+    let seq = &mut project.sequences[0];
+    let track = seq.tracks.iter_mut().find(|t| t.id == track_id).ok_or("轨道消失")?;
+    let c = track.clips.get_mut(idx).ok_or("片段消失")?;
+    if let Some(v) = opt_bool(args, "enabled") {
+        c.enable_3d = v;
+        if v && c.transform_3d.is_none() {
+            c.transform_3d = Some(reelix_lib::timeline::model::Transform3D {
+                position: reelix_lib::timeline::model::Vec3 { x: 0.0, y: 0.0, z: 0.0 },
+                rotation: reelix_lib::timeline::model::Vec3 { x: 0.0, y: 0.0, z: 0.0 },
+                scale: 1.0,
+                anchor: reelix_lib::timeline::model::Vec2 { x: 0.5, y: 0.5 },
+                orientation: reelix_lib::timeline::model::Layer3DOrientation::Camera,
+                receive_light: true,
+            });
+        }
+    }
+    if let Some(tf) = c.transform_3d.as_mut() {
+        if let Some(v) = opt_f64_required(args, "x") {
+            tf.position.x = v;
+        }
+        if let Some(v) = opt_f64_required(args, "y") {
+            tf.position.y = v;
+        }
+        if let Some(v) = opt_f64_required(args, "z") {
+            tf.position.z = v;
+        }
+        if let Some(v) = opt_f64_required(args, "scale") {
+            tf.scale = v;
+        }
+        if let Some(v) = opt_f64_required(args, "rotationZ") {
+            tf.rotation.z = v;
+        }
+    }
+    Ok(json!({ "ok": true, "enabled": c.enable_3d }))
+}
+
+fn mcp_add_subtitle(session: &mut Session, args: &Value) -> Result<Value, String> {
+    let text = need_str(args, "text")?;
+    let start = opt_f64_required(args, "startMs").ok_or("add_subtitle 需要 startMs")?;
+    let duration = opt_f64(args, "durationMs", 3000.0);
+    let project = session.project_mut()?;
+    let seq = &mut project.sequences[0];
+    // 没有字幕轨就建一条
+    let track_id = match seq.tracks.iter().find(|t| t.kind == TrackKind::Subtitle) {
+        Some(t) => t.id.clone(),
+        None => {
+            let track = reelix_lib::timeline::model::Track {
+                id: new_id("track"),
+                kind: TrackKind::Subtitle,
+                index: 0,
+                muted: false,
+                solo: false,
+                locked: false,
+                hidden: false,
+                height: 44.0,
+                clips: vec![],
+            };
+            let id = track.id.clone();
+            seq.tracks.push(track);
+            id
+        }
+    };
+    let clip = Clip {
+        id: new_id("clip"),
+        asset_id: String::new(),
+        track_id: track_id.clone(),
+        text: Some(text.clone()),
+        start_ms: start.max(0.0),
+        duration_ms: duration.max(100.0),
+        in_ms: 0.0,
+        out_ms: duration.max(100.0),
+        speed: 1.0,
+        reversed: false,
+        node_id: String::new(),
+        compound_id: None,
+        enable_3d: false,
+        transform_3d: None,
+        transition_in: None,
+        audio_fade_in_ms: None,
+        audio_fade_out_ms: None,
+        audio_highpass_hz: None,
+        audio_lowpass_hz: None,
+        audio_delay_ms: None,
+        label: None,
+        enabled: true,
+    };
+    let node_id = String::new();
+    let seq = &mut project.sequences[0];
+    let track = seq.tracks.iter_mut().find(|t| t.id == track_id).ok_or("字幕轨消失")?;
+    let mut clip = clip;
+    clip.node_id = node_id;
+    track.clips.push(clip.clone());
+    Ok(json!({ "clipId": clip.id, "trackId": track_id }))
 }
 
 fn probe_media(args: &Value) -> Result<Value, String> {

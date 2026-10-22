@@ -23,6 +23,7 @@ import type {
 import { DEFAULT_TRANSFORM_3D } from "../types/project";
 import type { GraphNode } from "../types/graph";
 import type { Effect, EffectKeyframe, EffectParamValue, EffectType } from "../types/effect";
+import type { EasingPreset } from "../types/keyframe";
 import type { ExportProgressPayload } from "../services/export";
 import type { Keyframe } from "../types/keyframe";
 import { evaluateCurve } from "../core/curveEval";
@@ -245,6 +246,9 @@ interface AppState {
   setFxCanvasTool: (tool: "selection" | "hand" | "zoom") => void;
   /** 时间线缩放倍率（px/ms）：菜单、快捷键、Ctrl+滚轮共用一份 */
   zoomLevel: number;
+  /** 监视器当前帧 objectURL：调色面板示波器/颜色占比实时统计用 */
+  monitorFrameUrl: string | null;
+  setMonitorFrameUrl: (url: string | null) => void;
   setZoomLevel: (level: number) => void;
   /** 素材箱当前选中项（菜单「连接媒体」用） */
   pickedAssetId: Id | null;
@@ -299,6 +303,8 @@ interface AppState {
   toggleEffectParamAnimation: (effectId: Id, key: string) => void;
   /** 在指定时刻写入 / 更新一个关键帧 */
   upsertEffectKeyframe: (effectId: Id, param: string, timeMs: number, value: number) => void;
+  /** 批量设关键帧缓动（BLURRR 式：选中区间后右侧/右键选预设） */
+  setKeyframesEasing: (updates: Array<{ id: Id; easing: EasingPreset; easingExpr?: string }>) => void;
   /** 批量更新关键帧位置（曲线编辑器拖动 / 框选后整体移动） */
   updateEffectKeyframes: (updates: Array<{ id: Id; timeMs: number; value: number }>) => void;
   setSelectedKeyframeIds: (ids: Id[]) => void;
@@ -921,6 +927,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   zoomLevel: 0.1,
+  monitorFrameUrl: null,
+  setMonitorFrameUrl: (url) => set({ monitorFrameUrl: url }),
   setZoomLevel: (level) => set({ zoomLevel: Math.min(8, Math.max(0.02, level)) }),
 
   pickedAssetId: null,
@@ -1221,6 +1229,18 @@ export const useAppStore = create<AppState>((set, get) => ({
           state.playheadMs,
           param.value
         ),
+      };
+    }),
+
+  setKeyframesEasing: (updates) =>
+    set((s) => {
+      const map = new Map(updates.map((u) => [u.id, u]));
+      return {
+        effectKeyframes: s.effectKeyframes.map((k) => {
+          const u = map.get(k.id);
+          if (!u) return k;
+          return { ...k, easing: u.easing, easingExpr: u.easingExpr ?? null };
+        }),
       };
     }),
 

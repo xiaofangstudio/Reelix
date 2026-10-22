@@ -1185,11 +1185,24 @@ pub fn particles(
 
 /// 从参数字典里取一个数值，缺省或类型不符时用 `default`。
 fn num(params: &HashMap<String, ParamValue>, key: &str, default: f32) -> f32 {
-    params
-        .get(key)
-        .and_then(ParamValue::as_f64)
-        .map(|v| v as f32)
-        .unwrap_or(default)
+    match params.get(key) {
+        // 数字参数：直接取
+        Some(ParamValue::Number(n)) => *n as f32,
+        // 文本参数：数字串照旧；"expr:..." 前缀走表达式引擎（写错回落默认值，
+        // 表达式崩不了合成）。变量 time/seed 由调用环境注入（暂无 time，seed=key 哈希）。
+        Some(ParamValue::Text(s)) => {
+            let t = s.trim();
+            if let Some(body) = t.strip_prefix("expr:") {
+                let seed = key.bytes().map(|b| b as f64).sum::<f64>();
+                crate::expr::eval(body, &[("time", 0.0), ("seed", seed)])
+                    .map(|v| v as f32)
+                    .unwrap_or(default)
+            } else {
+                t.parse::<f32>().unwrap_or(default)
+            }
+        }
+        _ => default,
+    }
 }
 
 /// 从参数字典里取一个文本，缺省时用 `default`。
@@ -1392,6 +1405,141 @@ pub fn posterize(input: &Frame, levels: f32) -> Frame {
 }
 
 
+
+// ---------------------------------------------------------------------------
+// 3D 图层变换（真渲染版）：把片段的 XYZ 变换作用到画面上
+// ---------------------------------------------------------------------------
+
+/// 3D 变换参数（与 timeline::model::Transform3D 同构，这里不引依赖）。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Transform3D {
+    pub position: [f32; 3],
+    pub rotation: [f32; 3],
+    pub scale: f32,
+    pub anchor: [f32; 2],
+}
+
+/// 把一帧按 3D 变换重新采样：锚点(归一化) → 缩放 → Z 轴旋转 → 平移(像素，Y 向下) → 画布裁剪。
+/// position.z 只影响景深强度（调用方另行模糊），这里不改变画幅。
+pub fn transform3d(input: &Frame, tf: &Transform3D) -> Frame {
+    let (w, h) = (input.width as f32, input.height as f32);
+    let ax = tf.anchor[0].clamp(0.0, 1.0) * w;
+    let ay = tf.anchor[1].clamp(0.0, 1.0) * h;
+    let scale = if tf.scale.abs() < 1e-6 { 1.0 } else { tf.scale };
+    // 只绕 Z 转（XY 旋转在正交视图下等效于缩放+倾斜，留给真 3D 渲染器）
+    let angle = tf.rotation[2].to_radians();
+    let (sin, cos) = (angle.sin(), angle.cos());
+    let tx = tf.position[0];
+    let ty = tf.position[1];
+    let inv = 1.0 / scale;
+
+    let mut out = Frame::new(input.width, input.height); // 透明底：移出画布的部分变透明
+    for y in 0..out.height {
+        for x in 0..out.width {
+            let (xf, yf) = (x as f32, y as f32);
+            // 目标 → 源：反推采样点
+            let dx = (xf - tx - ax) * inv;
+            let dy = (yf - ty - ay) * inv;
+            let sx = dx * cos + dy * sin + ax;
+            let sy = -dx * sin + dy * cos + ay;
+            let ix = sx.round() as i64;
+            let iy = sy.round() as i64;
+            if ix < 0 || iy < 0 || ix >= input.width as i64 || iy >= input.height as i64 {
+                continue; // 越界保持透明
+            }
+            let si = (iy as usize * input.width + ix as usize) * 4;
+            let di = (y * out.width + x) * 4;
+            for k in 0..4 {
+                out.pixels[di + k] = input.pixels[si + k];
+            }
+        }
+    }
+    out
+}
+
+/// 景深（简化）：按 Z 距离对图层做高斯模糊。
+/// focus_z 是合焦平面的 Z；strength 是最大模糊半径（像素）。
+/// z 偏离合焦面越远越模糊；光圈简化成线性。
+pub fn depth_of_field(input: &Frame, z: f32, focus_z: f32, strength: f32) -> Frame {
+    let coc = ((z - focus_z).abs() / 1000.0 * strength).clamp(0.0, strength);
+    if coc < 0.5 {
+        return input.clone();
+    }
+    // 复用现有的 box/高斯模糊（半径 1~strength）
+    blur(input, coc / 32.0)
+}
+
+
+
+/// 达芬奇式色轮：lift / gamma / gain 三个轮子的 (x, y) 偏移（-1~1）。
+/// x → 红青轴（+红-青），y → 绿品轴（+绿-品）；蓝轴用 z？简化：每轮再给
+/// 一个 master 强度（0~1），乘到偏移量上。公式：
+///   lift  = 阴影偏色（加性，权重 1-v）
+///   gamma = 中间调偏色（gamma 曲线偏移，权重 0.5）
+///   gain  = 高光偏色（乘性，权重 v）
+pub fn color_wheels(
+    input: &Frame,
+    lift: [f32; 2],
+    gamma: [f32; 2],
+    gain: [f32; 2],
+) -> Frame {
+    let mut out = input.clone();
+    // 色轮偏移 → RGB 分量：x=+1 偏红，x=-1 偏青；y=+1 偏绿，y=-1 偏品
+    // wheel→rgb: r = x*0.5 + 0.0, g = y*0.5 + 0.0, b = -(x+y)*0.25
+    let wheel_rgb = |w: [f32; 2]| -> [f32; 3] {
+        [
+            w[0] * 0.5,
+            w[1] * 0.5,
+            -(w[0] + w[1]) * 0.25,
+        ]
+    };
+    let l = wheel_rgb(lift);
+    let g = wheel_rgb(gamma);
+    let a = wheel_rgb(gain);
+    for px in out.pixels.chunks_exact_mut(4) {
+        for k in 0..3 {
+            let v = px[k];
+            // lift：暗部加性偏移（v 越小权重越大）
+            let lift_w = (1.0 - v).powi(2);
+            // gain：亮部乘性偏移（v 越大权重越大）
+            let gain_w = v.powi(2);
+            // gamma：中间调偏移
+            let gamma_w = 4.0 * v * (1.0 - v);
+            let mut nv = v
+                + l[k] * 0.25 * lift_w
+                + g[k] * 0.15 * gamma_w
+                + a[k] * 0.3 * gain_w;
+            nv = nv.clamp(0.0, 1.0);
+            px[k] = nv;
+        }
+    }
+    out
+}
+
+/// 色阶：输入黑场 / 白场 / 中间调 gamma，输出黑场 / 白场。
+pub fn levels(
+    input: &Frame,
+    in_low: f32,
+    in_high: f32,
+    gamma: f32,
+    out_low: f32,
+    out_high: f32,
+) -> Frame {
+    let mut out = input.clone();
+    let lo = in_low.clamp(0.0, 0.98);
+    let hi = in_high.clamp(lo + 0.02, 1.0);
+    let span = (hi - lo).max(1e-6);
+    let g = 1.0 / gamma.clamp(0.05, 8.0);
+    for px in out.pixels.chunks_exact_mut(4) {
+        for k in 0..3 {
+            let v = ((px[k] - lo) / span).clamp(0.0, 1.0);
+            let v = v.powf(g);
+            px[k] = out_low + (out_high - out_low) * v;
+        }
+    }
+    out
+}
+
 pub fn apply(
     effect_type: &str,
     params: &HashMap<String, ParamValue>,
@@ -1469,6 +1617,29 @@ pub fn apply(
         "findEdges" => find_edges(input, flag(params, "invert", false)),
         "emboss" => emboss(input, num(params, "strength", 100.0)),
         "posterize" => posterize(input, num(params, "levels", 6.0)),
+        "colorWheels" => color_wheels(
+            input,
+            [
+                num(params, "liftX", 0.0),
+                num(params, "liftY", 0.0),
+            ],
+            [
+                num(params, "gammaX", 0.0),
+                num(params, "gammaY", 0.0),
+            ],
+            [
+                num(params, "gainX", 0.0),
+                num(params, "gainY", 0.0),
+            ],
+        ),
+        "levels" => levels(
+            input,
+            num(params, "inLow", 0.0),
+            num(params, "inHigh", 1.0),
+            num(params, "gamma", 1.0),
+            num(params, "outLow", 0.0),
+            num(params, "outHigh", 1.0),
+        ),
         "gpuLut" => {
             // GPU 3D LUT（真 GPU）；设备不可用/无表时回落 CPU 版 LUT
             let file = text(params, "file", "");
@@ -2070,5 +2241,84 @@ mod tests {
         for c in 0..4 {
             assert!(approx(out.pixel(0, 0)[c], f.pixel(0, 0)[c]), "调色全中性时通道 {c} 应当不变");
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests_3d {
+    use super::*;
+    use crate::graph::effects::Frame;
+
+    fn fill(w: usize, h: usize, v: f32) -> Frame {
+        let mut f = Frame::new(w, h);
+        for p in f.pixels.chunks_exact_mut(4) {
+            p[0] = v;
+            p[1] = v;
+            p[2] = v;
+            p[3] = 1.0;
+        }
+        f
+    }
+
+    /// 3D 变换真渲染：向右下平移 20px 后，左上角应透明、内容挪到右下。
+    #[test]
+    fn transform3d_moves_content() {
+        let f = fill(64, 64, 1.0);
+        let tf = Transform3D {
+            position: [20.0, 20.0, 0.0],
+            ..Default::default()
+        };
+        let out = transform3d(&f, &tf);
+        assert!(out.pixels[3] < 0.01, "左上角应透明");
+        let i = (30 * out.width + 30) * 4;
+        assert!(out.pixels[i] > 0.99, "平移后内容应落到右下");
+    }
+
+    /// 缩放 2 倍：源只有左上一半被放大铺满，右下半的白色被推出画布。
+    #[test]
+    fn transform3d_scales() {
+        let mut f = fill(32, 32, 0.0);
+        for y in 24..32 {
+            for x in 24..32 {
+                let i = (y * 32 + x) * 4;
+                f.pixels[i] = 1.0;
+                f.pixels[i + 1] = 1.0;
+                f.pixels[i + 2] = 1.0;
+            }
+        }
+        let tf = Transform3D {
+            scale: 2.0,
+            ..Default::default()
+        };
+        let out = transform3d(&f, &tf);
+        let any_white = out.pixels.chunks_exact(4).any(|p| p[0] > 0.5);
+        assert!(!any_white, "2 倍放大后源右下半应被推出画布");
+        assert!(out.pixels[3] > 0.99, "画布内应有内容");
+    }
+
+    /// 旋转 90°：源左上角白块按采样方向转到中心左下，原位置变透明。
+    #[test]
+    fn transform3d_rotates_z() {
+        let mut f = fill(64, 64, 0.0);
+        for y in 0..8 {
+            for x in 0..8 {
+                let i = (y * 64 + x) * 4;
+                f.pixels[i] = 1.0;
+                f.pixels[i + 1] = 1.0;
+                f.pixels[i + 2] = 1.0;
+            }
+        }
+        let tf = Transform3D {
+            rotation: [0.0, 0.0, 90.0],
+            anchor: [0.5, 0.5],
+            ..Default::default()
+        };
+        let out = transform3d(&f, &tf);
+        // 中心锚点：sx=yf, sy=64-xf：源(5,5) → 目标(59,5)（右上）
+        let moved = (5 * out.width + 59) * 4;
+        assert!(out.pixels[moved] > 0.9, "旋转后白块应到右上");
+        let orig = (5 * out.width + 5) * 4;
+        assert!(out.pixels[orig] < 0.1, "原位置应转空");
     }
 }

@@ -12,6 +12,9 @@ pub enum EasingPreset {
     EaseInOut,
     Bounce,
     Elastic,
+    /// 表达式缓动等前端自定义值：后端烘关键帧时按线性处理（曲线预览在前端）
+    #[serde(other)]
+    Custom,
 }
 
 impl EasingPreset {
@@ -24,6 +27,7 @@ impl EasingPreset {
             EasingPreset::EaseInOut => "缓入缓出",
             EasingPreset::Bounce => "回弹",
             EasingPreset::Elastic => "弹性",
+            EasingPreset::Custom => "自定义",
         }
     }
 }

@@ -302,7 +302,7 @@ export function PropertiesPanel() {
                             className="value num"
                             type="number"
                             step={1}
-                            title="转了几整圈：1X = 一圈，-1X = 反向一圈；角度会跟着自动换算"
+                            title="转了几整圈：1X = 一圈，-1X = 反向一圈；角度会跟着自动换算（可填 expr: 表达式）"
                             value={Math.round((transform.rotation.z / 360) * 100) / 100}
                             onChange={(e) => {
                               const turns = Number(e.target.value);
@@ -320,7 +320,7 @@ export function PropertiesPanel() {
                             className="value num"
                             type="number"
                             step={5}
-                            title="旋转角度（Z 轴，度）"
+                            title="旋转角度（Z 轴，度）；可填 expr: 表达式"
                             value={Math.round(transform.rotation.z * 100) / 100}
                             onChange={(e) => {
                               const v = Number(e.target.value);

@@ -31,6 +31,7 @@ export const CATEGORY_SLUG: Record<NodeCategory, string> = {
   摄像机: "camera",
   GPU: "gpu",
   生成: "generate",
+  调色: "color",
   风格化: "stylize",
   输出: "output",
 };

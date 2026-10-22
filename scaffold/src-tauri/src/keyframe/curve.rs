@@ -10,8 +10,8 @@ fn easing_tangents(easing: EasingPreset) -> [f64; 4] {
         EasingPreset::EaseIn => [0.42, 0.0, 1.0, 1.0],
         EasingPreset::EaseOut => [0.0, 0.0, 0.58, 1.0],
         EasingPreset::EaseInOut => [0.42, 0.0, 0.58, 1.0],
-        EasingPreset::Bounce => [0.34, 1.56, 0.64, 1.0],
-        EasingPreset::Elastic => [0.22, 1.4, 0.36, 1.0],
+        // Bounce / Elastic 用解析函数（见 apply_easing），不走贝塞尔
+        EasingPreset::Bounce | EasingPreset::Elastic | EasingPreset::Custom => [0.0, 0.0, 1.0, 1.0],
     }
 }
 
@@ -65,7 +65,40 @@ fn find_segment(keyframes: &[Keyframe], time_ms: f64) -> usize {
 }
 
 /// 把归一化时间 t 按缓动预设映射成缓动后的进度。
+/// 弹性（elastic）：起始快、末尾指数衰减振荡收敛（与前端 elasticOut 同公式）。
+fn elastic_out(t: f64) -> f64 {
+    if t <= 0.0 { return 0.0; }
+    if t >= 1.0 { return 1.0; }
+    let p = 0.4;
+    2.0_f64.powf(-9.0 * t) * ((t - p / 4.0) * (2.0 * std::f64::consts::PI) / p).sin() + 1.0
+}
+
+/// 弹跳（bounce）：标准 bounceOut（与前端 bounceOut 同公式）。
+fn bounce_out(t: f64) -> f64 {
+    let n1 = 7.5625;
+    let d1 = 2.75;
+    if t < 1.0 / d1 {
+        return n1 * t * t;
+    }
+    if t < 2.0 / d1 {
+        let t = t - 1.5 / d1;
+        return n1 * t * t + 0.75;
+    }
+    if t < 2.5 / d1 {
+        let t = t - 2.25 / d1;
+        return n1 * t * t + 0.9375;
+    }
+    let t = t - 2.625 / d1;
+    n1 * t * t + 0.984375
+}
+
 fn apply_easing(t: f64, easing: EasingPreset) -> f64 {
+    // 与前端 curveEval.ts 一致：弹性/弹跳用解析函数，其余走贝塞尔
+    match easing {
+        EasingPreset::Elastic => return elastic_out(t),
+        EasingPreset::Bounce => return bounce_out(t),
+        _ => {}
+    }
     let c = easing_tangents(easing);
     cubic_bezier_y(c[0], c[1], c[2], c[3], t)
 }
@@ -237,8 +270,7 @@ mod tests {
             (EasingPreset::EaseIn, [0.42, 0.0, 1.0, 1.0]),
             (EasingPreset::EaseOut, [0.0, 0.0, 0.58, 1.0]),
             (EasingPreset::EaseInOut, [0.42, 0.0, 0.58, 1.0]),
-            (EasingPreset::Bounce, [0.34, 1.56, 0.64, 1.0]),
-            (EasingPreset::Elastic, [0.22, 1.4, 0.36, 1.0]),
+            (EasingPreset::Custom, [0.0, 0.0, 1.0, 1.0]),
         ];
         for (preset, expected) in expected {
             let got = easing_tangents(preset);
@@ -281,19 +313,20 @@ mod tests {
         );
     }
 
-    /// 回弹与弹性是「过冲」类缓动，中途必须越过 1.0，说明没有被误夹取。
+    /// 弹性（Elastic）中途必须越过 1.0（过冲），弹跳（Bounce）收敛到 1 不越界。
     #[test]
-    fn overshoot_presets_pass_above_one() {
-        for preset in [EasingPreset::Bounce, EasingPreset::Elastic] {
-            let mut peak: f64 = 0.0;
-            let mut step = 1;
-            while step < 100 {
-                let x = step as f64 / 100.0;
-                peak = peak.max(apply_easing(x, preset));
-                step += 1;
-            }
-            assert!(peak > 1.0, "{preset:?} 应当存在过冲：峰值 {peak}");
+    fn elastic_overshoots_bounce_settles() {
+        let mut peak: f64 = 0.0;
+        let mut step = 1;
+        while step < 100 {
+            let x = step as f64 / 100.0;
+            peak = peak.max(apply_easing(x, EasingPreset::Elastic));
+            step += 1;
         }
+        assert!(peak > 1.0, "Elastic 应当存在过冲：峰值 {peak}");
+        // Bounce 末端应收敛回 1（弹跳落地）
+        let end = apply_easing(0.999, EasingPreset::Bounce);
+        assert!(end > 0.9, "Bounce 末端应接近 1：{end}");
     }
 
     /// 归一化时间 t 的贝塞尔求值在 x=0/1 处短路返回，保证端点精确。
