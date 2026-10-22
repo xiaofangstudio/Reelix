@@ -1,0 +1,75 @@
+/*
+ * 启动页样式 —— Strata / Reelix 同一家。
+ * 左侧黑色渐晕保白字，右半边无遮罩让背景保持清透。
+ */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background-size: cover;
+  background-position: center;
+  transition: opacity 0.5s ease;
+}
+.splash--fading { opacity: 0; }
+
+.splash::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  /* 左侧黑色阴影，向右渐隐 —— 只保左半边可读性，右半边保持画面 */
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.82) 0%,
+    rgba(0, 0, 0, 0.66) 28%,
+    rgba(0, 0, 0, 0.32) 46%,
+    rgba(0, 0, 0, 0) 58%
+  );
+}
+
+.splash__inner {
+  position: absolute;
+  left: 6vw;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #fff;
+  max-width: 620px;
+  user-select: none;
+}
+
+.splash__name {
+  font-size: clamp(64px, 10vw, 132px);
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35);
+}
+
+.splash__meta {
+  margin-top: 18px;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.splash__loading {
+  margin-top: 44px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.splash__bar {
+  margin-top: 10px;
+  width: 300px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.22);
+  overflow: hidden;
+}
+.splash__bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.92);
+  transition: width 0.35s ease;
+}
