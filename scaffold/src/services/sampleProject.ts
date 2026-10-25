@@ -28,6 +28,25 @@ function buildSampleProject(): Record<string, unknown> {
   const id = (p: string) => `${p}-${Math.random().toString(36).slice(2, 9)}`;
   const t = (offset: number) => now - 30_000 + offset;
 
+  /** 造一个关键帧。字段名必须与后端 `Keyframe` 的 camelCase 序列化一致，
+   *  否则读回来曲线是空的、动画等于没有。 */
+  const kf = (
+    targetId: string,
+    param: string,
+    timeMs: number,
+    value: number,
+    easing: string,
+  ) => ({
+    id: id("kf"),
+    targetId,
+    param,
+    timeMs,
+    value,
+    easing,
+    inTangent: { x: 0, y: 0 },
+    outTangent: { x: 0, y: 0 },
+  });
+
   const seqGraphId = id("graph");
   // 三条视频轨 + 一条音频轨 + 一条字幕轨 + 一条摄像机轨
   const v1 = id("track");
@@ -55,6 +74,43 @@ function buildSampleProject(): Record<string, unknown> {
     createdAt: t(0),
     modifiedAt: t(0),
     assets: [],
+    // —— 关键帧：示例工程不是「监视器里放个视频」，而是真参数动画 —— //
+    // 每条曲线都能在界面里继续拖、改缓动、加删帧；存盘后随工程一起走。
+    curves: [
+      {
+        targetId: gGrid,
+        param: "opacity",
+        keyframes: [
+          kf(gGrid, "opacity", 0, 0, "ease-out"),
+          kf(gGrid, "opacity", 1200, 70, "ease-out"),
+        ],
+      },
+      {
+        targetId: gCircle,
+        param: "opacity",
+        keyframes: [
+          kf(gCircle, "opacity", 300, 0, "ease-out"),
+          kf(gCircle, "opacity", 1500, 100, "ease-out"),
+        ],
+      },
+      {
+        targetId: gCircle,
+        param: "radius",
+        keyframes: [
+          kf(gCircle, "radius", 300, 18, "ease-in-out"),
+          kf(gCircle, "radius", 1600, 34, "ease-in-out"),
+          kf(gCircle, "radius", 3000, 24, "ease-in-out"),
+        ],
+      },
+      {
+        targetId: gGradient,
+        param: "angle",
+        keyframes: [
+          kf(gGradient, "angle", 0, 35, "linear"),
+          kf(gGradient, "angle", 3000, 95, "linear"),
+        ],
+      },
+    ],
     sequences: [
       {
         id: id("seq"),
@@ -246,15 +302,16 @@ function buildSampleProject(): Record<string, unknown> {
             outputs: [{ ...outPlug, connected: true }],
             bypassed: false, collapsed: false, animated: false },
           { id: gGrid, type: "grid", name: "网格", x: 0, y: 0,
-            params: { spacing: 120, lineWidth: 2, color: "#8fc4a8" },
+            // opacity 由下面的关键帧从 0 推到 70：开场网格是「淡入」的，不是一上来就有
+            params: { spacing: 120, lineWidth: 2, color: "#8fc4a8", opacity: 0 },
             inputs: [{ ...inPlug, connected: true }],
             outputs: [{ ...outPlug, connected: true }],
-            bypassed: false, collapsed: false, animated: false },
+            bypassed: false, collapsed: false, animated: true },
           { id: gCircle, type: "circle", name: "圆", x: 0, y: 0,
-            params: { centerX: 0.5, centerY: 0.45, radius: 28, color: "#ffd94d", feather: 12 },
+            params: { centerX: 0.5, centerY: 0.45, radius: 28, color: "#ffd94d", feather: 12, opacity: 0 },
             inputs: [{ ...inPlug, connected: true }],
             outputs: [{ ...outPlug, connected: true }],
-            bypassed: false, collapsed: false, animated: false },
+            bypassed: false, collapsed: false, animated: true },
           { id: gPoster, type: "posterize", name: "色调分离", x: 0, y: 0,
             params: { levels: 8 },
             inputs: [{ ...inPlug, connected: true }],
@@ -288,6 +345,9 @@ export async function openSampleProject(): Promise<boolean> {
     await invoke("write_text_file", { path, contents: json });
     await invoke("open_project", { path });
     await refreshProject();
+    // 关键一步：工程打开了但欢迎页没关，界面上就一直是「选择项目」那一屏。
+    // 编辑器是否显示取决于 project !== null && !startScreen，两个条件缺一不可。
+    useAppStore.getState().hideStartScreen();
     useAppStore.getState().pushNotice("info", "示例工程已打开：试试拖动播放头、右键片段、加效果");
     return true;
   } catch (err) {

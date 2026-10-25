@@ -11,6 +11,7 @@
 //! 而且写的是调用方明确给的路径。
 
 use std::path::Path;
+use std::process::Command;
 
 use serde_json::{json, Value};
 
@@ -417,6 +418,33 @@ pub fn catalog() -> Vec<Tool> {
                 &["text", "startMs"],
             ),
         },
+        Tool {
+            name: "set_sequence",
+            description: "改主序列的画幅、帧率、时长（宣传片复刻要 1920×1080/30fps，而新建工程默认是 25fps）。",
+            schema: schema(
+                json!({
+                    "width": p_num("画面宽，像素"),
+                    "height": p_num("画面高，像素"),
+                    "frameRate": p_num("帧率，例如 30"),
+                    "durationMs": p_num("序列时长，毫秒"),
+                }),
+                &[],
+            ),
+        },
+        Tool {
+            name: "render_video",
+            description: "把一份已保存的 .reelix 工程渲染成高清视频（走主程序同一条导出管线，含音频混音与字幕烧录）。",
+            schema: schema(
+                json!({
+                    "projectPath": p_str("工程文件路径（先用 save_project 落盘）"),
+                    "outputPath": p_str("输出视频路径，例如 D:/out.mp4"),
+                    "preset": p_str("导出预设：h264-1080p / h265-4k / h264-720p-proxy，缺省 h264-1080p"),
+                    "startMs": p_num("可选，导出起点毫秒（缺省 0）"),
+                    "endMs": p_num("可选，导出终点毫秒（缺省到序列末尾）"),
+                }),
+                &["projectPath", "outputPath"],
+            ),
+        },
     ]
 }
 
@@ -451,6 +479,8 @@ pub fn call(session: &mut Session, name: &str, args: &Value) -> Result<Value, St
         "nest_clips" => mcp_nest_clips(session, args),
         "set_clip_3d" => mcp_set_clip_3d(session, args),
         "add_subtitle" => mcp_add_subtitle(session, args),
+        "set_sequence" => set_sequence(session, args),
+        "render_video" => render_video(args),
         other => Err(format!("未知工具：{other}")),
     }
 }
@@ -672,10 +702,16 @@ fn new_project(session: &mut Session, args: &Value) -> Result<Value, String> {
 
 fn save_project(session: &mut Session, args: &Value) -> Result<Value, String> {
     let path = need_str(args, "path")?;
+    // 关键帧必须随工程落盘：以前这里只存了 project，曲线留在会话内存里，
+    // 一保存就丢——MCP 打的所有动画（刻度旋转、发光脉冲、文字淡入）
+    // 到了导出端全都读不到，成片永远是静止的。
+    let curves = session.keyframes.curves();
+    let curve_count = curves.len();
     let project = session.project_mut()?;
     project.modified_at = serialize::now_ms();
+    project.curves = curves;
     serialize::save(Path::new(&path), project)?;
-    Ok(json!({ "saved": true, "path": path }))
+    Ok(json!({ "saved": true, "path": path, "keyframes": curve_count }))
 }
 
 fn open_project(session: &mut Session, args: &Value) -> Result<Value, String> {
@@ -684,9 +720,12 @@ fn open_project(session: &mut Session, args: &Value) -> Result<Value, String> {
     let id = project.id.clone();
     let name = project.name.clone();
     let sequences = project.sequences.len();
+    let curves = project.curves.clone();
 
     session.project = Some(project);
+    // 打开工程时把曲线读回会话，否则接着编辑会看不到原来的动画
     session.keyframes.clear();
+    session.keyframes.load_curves(curves);
     session.engine.clear();
 
     Ok(json!({ "projectId": id, "name": name, "sequences": sequences }))
@@ -769,6 +808,9 @@ fn import_media(session: &mut Session, args: &Value) -> Result<Value, String> {
                 enable_3d: false,
                 transform_3d: None,
                 transition_in: None,
+                speed_curve: None,
+                audio_pitch_shift: false,
+                transition_out: None,
                 audio_fade_in_ms: None,
                 audio_fade_out_ms: None,
                 audio_highpass_hz: None,
@@ -868,6 +910,9 @@ fn add_clip(session: &mut Session, args: &Value) -> Result<Value, String> {
         enable_3d: false,
         transform_3d: None,
         transition_in: None,
+        speed_curve: None,
+        audio_pitch_shift: false,
+        transition_out: None,
         audio_fade_in_ms: None,
         audio_fade_out_ms: None,
         audio_highpass_hz: None,
@@ -974,6 +1019,9 @@ fn split_clip(session: &mut Session, args: &Value) -> Result<Value, String> {
         enable_3d: false,
         transform_3d: None,
         transition_in: None,
+        speed_curve: None,
+        audio_pitch_shift: false,
+        transition_out: None,
         audio_fade_in_ms: None,
         audio_fade_out_ms: None,
         audio_highpass_hz: None,
@@ -1172,6 +1220,9 @@ fn mcp_add_subtitle(session: &mut Session, args: &Value) -> Result<Value, String
         enable_3d: false,
         transform_3d: None,
         transition_in: None,
+        speed_curve: None,
+        audio_pitch_shift: false,
+        transition_out: None,
         audio_fade_in_ms: None,
         audio_fade_out_ms: None,
         audio_highpass_hz: None,
@@ -1194,3 +1245,125 @@ fn probe_media(args: &Value) -> Result<Value, String> {
     let info = probe_path(&path);
     serde_json::to_value(&info).map_err(|e| format!("序列化探测结果失败：{e}"))
 }
+
+fn set_sequence(session: &mut Session, args: &Value) -> Result<Value, String> {
+    let project = session.project_mut()?;
+    let seq = project
+        .sequences
+        .first_mut()
+        .ok_or_else(|| "工程里没有序列，先 new_project".to_string())?;
+    if let Some(v) = opt_f64_required(args, "width") {
+        seq.width = v.max(2.0) as u32;
+    }
+    if let Some(v) = opt_f64_required(args, "height") {
+        seq.height = v.max(2.0) as u32;
+    }
+    if let Some(v) = opt_f64_required(args, "frameRate") {
+        seq.frame_rate = v.max(1.0);
+    }
+    if let Some(v) = opt_f64_required(args, "durationMs") {
+        seq.duration_ms = v.max(1.0);
+    }
+    Ok(json!({
+        "width": seq.width,
+        "height": seq.height,
+        "frameRate": seq.frame_rate,
+        "durationMs": seq.duration_ms,
+    }))
+}
+
+/// 找主程序 `reelix.exe`。
+///
+/// 顺序：环境变量 `REELIX_EXE` → 与本进程同目录 → 开发期 target 目录。
+fn locate_reelix_exe() -> Result<std::path::PathBuf, String> {
+    if let Ok(v) = std::env::var("REELIX_EXE") {
+        let p = std::path::PathBuf::from(v);
+        if p.is_file() {
+            return Ok(p);
+        }
+    }
+    let exe = std::env::current_exe().map_err(|e| format!("定位自身失败：{e}"))?;
+    let dir = exe.parent().ok_or_else(|| "定位自身目录失败".to_string())?;
+    let candidates = [
+        // 便携版：两个 exe 放一起
+        dir.join("reelix.exe"),
+        // 开发期：reelix-mcp/target/release → ../../.. → scaffold/src-tauri/target/release
+        dir.join("../../../src-tauri/target/release/reelix.exe"),
+        // 保险：再多退一层
+        dir.join("../../../../src-tauri/target/release/reelix.exe"),
+    ];
+    for c in candidates {
+        if c.is_file() {
+            return Ok(c);
+        }
+    }
+    Err("找不到 reelix.exe：请设置环境变量 REELIX_EXE 指向主程序".to_string())
+}
+
+/// 把工程渲染成视频。
+///
+/// 为什么不在 MCP 里直接渲染：渲染管线（解帧 / 效果栈 / 转场 / 字幕烧录 / 混音）
+/// 都在 `commands` 模块里，而那是 `feature = "desktop"` 才编译的，MCP 刻意不链接
+/// tauri。所以这里把「导出一段工程」交给主程序的无窗口模式
+/// `reelix.exe --export ...`——它内部调用的仍是与界面导出同一个 `export_sync`，
+/// 画质完全一致，不是另做一套。
+fn render_video(args: &Value) -> Result<Value, String> {
+    let project_path = need_str(args, "projectPath")?;
+    let output = need_str(args, "outputPath")?;
+    let preset = opt_str(args, "preset").unwrap_or_else(|| "h264-1080p".to_string());
+
+    if !Path::new(&project_path).is_file() {
+        return Err(format!("工程文件不存在：{project_path}（先用 save_project 落盘）"));
+    }
+    let exe = locate_reelix_exe()?;
+
+    let mut cmd = Command::new(&exe);
+    cmd.arg("--export")
+        .arg("--project")
+        .arg(&project_path)
+        .arg("--out")
+        .arg(&output)
+        .arg("--preset")
+        .arg(&preset);
+    if let Some(v) = opt_f64_required(args, "startMs") {
+        cmd.arg("--start").arg(format!("{v}"));
+    }
+    if let Some(v) = opt_f64_required(args, "endMs") {
+        cmd.arg("--end").arg(format!("{v}"));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let status = cmd
+        .status()
+        .map_err(|e| format!("启动导出进程失败：{e}"))?;
+
+    // 主程序是 windows_subsystem="windows"，没有控制台，
+    // 结果靠退出码 + 它写在输出旁边的 <输出>.export.log
+    let log_path = Path::new(&output).with_extension("export.log");
+    let log_text = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let tail: Vec<&str> = log_text.lines().rev().take(15).collect();
+    let tail: Vec<&str> = tail.into_iter().rev().collect();
+
+    if !status.success() {
+        return Err(format!(
+            "导出失败（退出码 {:?}）：\n{}",
+            status.code(),
+            tail.join("\n")
+        ));
+    }
+
+    let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+    Ok(json!({
+        "ok": true,
+        "output": output,
+        "preset": preset,
+        "bytes": size,
+        "log": tail.join("\n"),
+    }))
+}
+

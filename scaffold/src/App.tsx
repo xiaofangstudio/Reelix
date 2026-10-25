@@ -282,6 +282,23 @@ export function App() {
       // Ctrl 组合快捷键（剪映基础组）
       if (e.ctrlKey || e.metaKey) {
         const key = e.key.toLowerCase();
+        // 撤销 / 重做：后端 history 栈早就有，只是以前没绑键
+        if (key === "z") {
+          e.preventDefault();
+          if (e.shiftKey) state.redo();
+          else state.undo();
+          return;
+        }
+        if (key === "y") {
+          e.preventDefault();
+          state.redo();
+          return;
+        }
+        if (key === "x") {
+          e.preventDefault();
+          state.cutClips();
+          return;
+        }
         if (key === "c") {
           e.preventDefault();
           state.copyClips();

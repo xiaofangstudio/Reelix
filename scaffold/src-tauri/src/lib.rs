@@ -36,6 +36,18 @@ use state::AppState;
 /// 启动 Tauri：装配全局状态、注册系统对话框插件、挂上全部命令。
 #[cfg(feature = "desktop")]
 pub fn run() {
+    // —— 无窗口导出模式 —— //
+    // MCP / 脚本用这条路径导出成片：
+    //   reelix.exe --export --project <工程> --out <mp4> [--preset id] [--start ms] [--end ms]
+    // 它不创建窗口、不起事件循环，跑完直接按退出码退出。
+    // 渲染走的是与界面导出同一份 export_sync，画质完全一致。
+    {
+        let argv: Vec<String> = std::env::args().collect();
+        if argv.get(1).map(|s| s.as_str()) == Some("--export") {
+            std::process::exit(commands::export::run_export_cli(&argv));
+        }
+    }
+
     tauri::Builder::default()
         // 只在用户主动保存/打开项目时弹系统对话框，没有网络行为。
         .plugin(tauri_plugin_dialog::init())

@@ -563,6 +563,12 @@ mod tests {
 }
 
 /// 表达式求值（关键帧曲线的表达式 easing 用）：变量 t ∈ [0,1]。
+///
+/// 只有桌面外壳需要它（前端 `invoke("eval_expr")`）。
+/// `expr` 模块本身是纯逻辑（`eval` 供关键帧求值复用），所以这里单独给命令
+/// 加 desktop 门控——否则 `default-features = false` 的 reelix-mcp 会因为
+/// 这一行 `#[tauri::command]` 直接编译不过（踩过一次）。
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn eval_expr(text: String, t: f64) -> Result<f64, String> {
     eval(&text, &[("t", t.clamp(0.0, 1.0))])

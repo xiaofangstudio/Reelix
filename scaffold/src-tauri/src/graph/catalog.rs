@@ -132,7 +132,9 @@ pub fn node_catalog() -> Vec<NodeTypeInfo> {
             node_type: "text".into(),
             label: "文字".into(),
             category: "输入".into(),
-            inputs: vec![],
+            // 给一个输入插槽：文字是「叠在底图上」的图层，
+            // 没有入线时它会拿视频帧当底，有了入线就能接在环/渐变之后叠字。
+            inputs: vec![in_plug()],
             outputs: vec![out_frame()],
             defaults: defaults(&[
                 ("text", ParamValue::from("文字")),
@@ -140,17 +142,23 @@ pub fn node_catalog() -> Vec<NodeTypeInfo> {
                 ("color", ParamValue::from("#FFFFFF")),
                 ("align", ParamValue::from("center")),
                 ("opacity", ParamValue::Number(100.0)),
+                ("offsetY", ParamValue::Number(0.0)),
+                ("offsetX", ParamValue::Number(0.0)),
             ]),
         },
         NodeTypeInfo {
             node_type: "image".into(),
             label: "图片".into(),
             category: "输入".into(),
-            inputs: vec![],
+            // 同上：图片也是叠加图层
+            inputs: vec![in_plug()],
             outputs: vec![out_frame()],
             defaults: defaults(&[
                 ("source", ParamValue::from("")),
                 ("opacity", ParamValue::Number(100.0)),
+                ("posX", ParamValue::Number(0.5)),
+                ("posY", ParamValue::Number(0.5)),
+                ("scale", ParamValue::Number(100.0)),
             ]),
         },
         // ---- 变换 ----
@@ -245,6 +253,8 @@ pub fn node_catalog() -> Vec<NodeTypeInfo> {
                 ("colorA", ParamValue::from("#2244cc")),
                 ("colorB", ParamValue::from("#ee7722")),
                 ("angle", ParamValue::Number(90.0)),
+                ("opacity", ParamValue::Number(100.0)),
+            
             ],
         ),
         filter_node(
@@ -257,6 +267,62 @@ pub fn node_catalog() -> Vec<NodeTypeInfo> {
                 ("radius", ParamValue::Number(30.0)),
                 ("color", ParamValue::from("#ffffff")),
                 ("feather", ParamValue::Number(5.0)),
+            ],
+        ),
+        // ---- 环形 HUD：细环 + 一圈刻度（EffectCraft 式开场的基本件）----
+        filter_node(
+            "line",
+            "线段",
+            "生成",
+            &[
+                ("x1", ParamValue::Number(0.1)),
+                ("y1", ParamValue::Number(0.5)),
+                ("x2", ParamValue::Number(0.9)),
+                ("y2", ParamValue::Number(0.5)),
+                ("thickness", ParamValue::Number(0.3)),
+                ("color", ParamValue::from("#ffffff")),
+                ("progress", ParamValue::Number(100.0)),
+                ("opacity", ParamValue::Number(100.0)),
+            ],
+        ),
+        filter_node(
+            "invert",
+            "反色",
+            "调色",
+            &[
+                ("amount", ParamValue::Number(100.0)),
+            ],
+        ),
+        filter_node(
+            "ring",
+            "圆环",
+            "生成",
+            &[
+                ("centerX", ParamValue::Number(0.5)),
+                ("centerY", ParamValue::Number(0.5)),
+                ("radius", ParamValue::Number(30.0)),
+                ("thickness", ParamValue::Number(0.6)),
+                ("color", ParamValue::from("#ffffff")),
+                ("feather", ParamValue::Number(2.0)),
+                ("opacity", ParamValue::Number(100.0)),
+            
+            ],
+        ),
+        filter_node(
+            "ringTicks",
+            "环形刻度",
+            "生成",
+            &[
+                ("centerX", ParamValue::Number(0.5)),
+                ("centerY", ParamValue::Number(0.5)),
+                ("count", ParamValue::Number(72.0)),
+                ("radius", ParamValue::Number(34.0)),
+                ("tickLength", ParamValue::Number(3.0)),
+                ("thickness", ParamValue::Number(0.45)),
+                ("startAngle", ParamValue::Number(0.0)),
+                ("color", ParamValue::from("#ffffff")),
+                ("opacity", ParamValue::Number(100.0)),
+            
             ],
         ),
         filter_node(
@@ -277,6 +343,8 @@ pub fn node_catalog() -> Vec<NodeTypeInfo> {
                 ("spacing", ParamValue::Number(48.0)),
                 ("lineWidth", ParamValue::Number(2.0)),
                 ("color", ParamValue::from("#33ccff")),
+                ("opacity", ParamValue::Number(100.0)),
+            
             ],
         ),
         // ---- 风格化补全 ----
@@ -303,6 +371,9 @@ pub fn node_catalog() -> Vec<NodeTypeInfo> {
                 ("gammaY", ParamValue::Number(0.0)),
                 ("gainX", ParamValue::Number(0.0)),
                 ("gainY", ParamValue::Number(0.0)),
+                // 第四轮「全局」（达芬奇的 Offset）：全亮度均匀偏移
+                ("offsetX", ParamValue::Number(0.0)),
+                ("offsetY", ParamValue::Number(0.0)),
             ],
         ),
         filter_node(

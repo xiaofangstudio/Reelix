@@ -671,6 +671,335 @@ fn run_export(
     }
 }
 
+/// 无窗口导出：`reelix.exe --export --project <工程> --out <输出> [--preset id] [--start ms] [--end ms]`
+///
+/// 给 MCP / 脚本用。为什么走「主程序 + CLI」而不是让 MCP 直接渲染：
+/// 渲染管线（解帧 / 效果栈 / 转场 / 字幕烧录 / 混音）全在 `commands` 里，
+/// 那是 `feature = "desktop"` 才编译的模块，而 MCP 刻意不链接 tauri。
+/// 与其把上千行管线搬出 tauri 依赖，不如让 MCP 把「导出一段工程」这件事
+/// 交给主程序来做——**渲染用的还是同一份 `export_sync`**，画质与界面导出完全一致。
+///
+/// release 版是 `windows_subsystem = "windows"`，没有控制台，
+/// 所以除了退出码，还会在输出旁边写一份 `<输出>.export.log`，
+/// 让调用方（MCP）能读到进度与失败原因。
+pub fn run_export_cli(argv: &[String]) -> i32 {
+    // argv[0] 是程序名，argv[1] 是 --export；从第 3 个开始按 flag 解析
+    let mut project_path: Option<String> = None;
+    let mut output: Option<String> = None;
+    let mut preset_id = "h264-1080p".to_string();
+    let mut start_ms: Option<f64> = None;
+    let mut end_ms: Option<f64> = None;
+
+    let mut i = 2;
+    while i < argv.len() {
+        let key = argv[i].as_str();
+        let val = argv.get(i + 1).map(|s| s.as_str());
+        match (key, val) {
+            ("--project", Some(v)) => project_path = Some(v.to_string()),
+            ("--out", Some(v)) => output = Some(v.to_string()),
+            ("--preset", Some(v)) => preset_id = v.to_string(),
+            ("--start", Some(v)) => start_ms = v.parse::<f64>().ok(),
+            ("--end", Some(v)) => end_ms = v.parse::<f64>().ok(),
+            _ => {
+                i += 1;
+                continue;
+            }
+        }
+        i += 2;
+    }
+
+    let (Some(project_path), Some(output)) = (project_path, output) else {
+        return 2; // 参数不全
+    };
+    let out_path = PathBuf::from(&output);
+    let log_path = out_path.with_extension("export.log");
+    let _ = std::fs::remove_file(&log_path);
+    let log = |line: &str| {
+        if let Some(dir) = log_path.parent() {
+            if !dir.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            let _ = writeln!(f, "{line}");
+        }
+    };
+
+    log(&format!("导出开始：{project_path} → {output}（预设 {preset_id}）"));
+
+    let project = match crate::project::serialize::load(Path::new(&project_path)) {
+        Ok(p) => p,
+        Err(e) => {
+            log(&format!("读取工程失败：{e}"));
+            return 3;
+        }
+    };
+    let sequence = match project.sequences.first().cloned() {
+        Some(s) => s,
+        None => {
+            log("工程里没有序列");
+            return 4;
+        }
+    };
+
+    // 关键帧随工程一起回来了（Project.curves），这里直接喂给渲染
+    let mut keyframes = KeyframeStore::new();
+    keyframes.load_curves(project.curves.clone());
+
+    let start = start_ms.unwrap_or(0.0);
+    let end = end_ms.unwrap_or_else(|| sequence.duration_ms.max(1.0));
+    let cache_dir = std::env::temp_dir().join("reelix-export-cache");
+    let _ = std::fs::create_dir_all(&cache_dir);
+
+    let result = export_sync(
+        &project,
+        &sequence,
+        &keyframes,
+        &preset_id,
+        start,
+        end,
+        &out_path,
+        &cache_dir,
+        &|done, total, stage| {
+            if done == 0 || done == total || done % 25 == 0 {
+                log(&format!("{stage} {done}/{total}"));
+            }
+        },
+    );
+
+    match result {
+        Ok(r) => {
+            log(&format!(
+                "完成：{} 帧 {}x{}，音频={}，字幕={} → {}",
+                r.frames, r.width, r.height, r.has_audio, r.has_subtitles, r.output
+            ));
+            0
+        }
+        Err(e) => {
+            log(&format!("失败：{e}"));
+            5
+        }
+    }
+}
+
+/// 同步导出的结果。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportResult {
+    pub output: String,
+    pub frames: u64,
+    pub width: usize,
+    pub height: usize,
+    pub has_audio: bool,
+    pub has_subtitles: bool,
+}
+
+/// 同步导出：给 MCP / 命令行用，**不依赖 Tauri 的 AppHandle 与 AppState**。
+///
+/// 为什么不直接复用 `run_export`：后者一路都在读 `app.state::<AppState>()`
+/// 做取消 / 暂停、发进度事件；MCP 是独立进程，没有 Tauri 运行时，拿不到这些。
+///
+/// 但**渲染管线完全一样**：`plan_frame → render_plan → rgba → 灌 ffmpeg stdin`，
+/// 音频走同一套 `mix_audio`、字幕走同一个 `write_ass`、编码器解析同一个
+/// `resolve_encoder`。所以 MCP 导出的画质和主程序导出的一模一样，不是另做一套。
+pub fn export_sync(
+    project: &Project,
+    sequence: &Sequence,
+    keyframes: &KeyframeStore,
+    preset_id: &str,
+    start_ms: f64,
+    end_ms: f64,
+    output: &Path,
+    cache_dir: &Path,
+    on_progress: &dyn Fn(u64, u64, &str),
+) -> Result<ExportResult, String> {
+    if end_ms <= start_ms {
+        return Err("导出范围无效：结束时间必须晚于开始时间".to_string());
+    }
+    let preset = export_presets()
+        .into_iter()
+        .find(|p| p.id == preset_id)
+        .ok_or_else(|| format!("未知的导出预设：{preset_id}"))?;
+    let video_encoder = resolve_encoder(&preset.video_codec).ok_or_else(|| {
+        format!(
+            "本机 ffmpeg 没有可用的 {} 编码器，请换预设或检查 ffmpeg 目录",
+            preset.video_codec
+        )
+    })?;
+
+    let frame_rate = sequence.frame_rate.max(1.0);
+    let total_frames = (((end_ms - start_ms) / 1000.0) * frame_rate).round().max(0.0) as u64;
+    if total_frames == 0 {
+        return Err("导出范围太短，按序列帧率算不出一整帧".to_string());
+    }
+    let size = export_size(sequence, preset.width, preset.height);
+    let range = ExportRange { start_ms, end_ms };
+
+    if let Some(dir) = output.parent() {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("创建输出目录失败：{e}"))?;
+        }
+    }
+
+    let job_id = new_id("mcp");
+    let pcm_path = cache_dir.join(format!("mcp-mix-{job_id}.pcm"));
+
+    // —— 音频：范围内所有带音轨的片段混成一条 PCM —— //
+    on_progress(0, total_frames, "混音中");
+    let has_audio = mix_audio(project, sequence, range, &pcm_path);
+
+    // —— 字幕：先生成 ASS，编码时用 subtitles 滤镜烧进画面 —— //
+    on_progress(0, total_frames, "字幕中");
+    let ass_path = cache_dir.join(format!("mcp-sub-{job_id}.ass"));
+    let _ass_guard = TempFile(ass_path.clone());
+    let has_subtitles = subtitle::write_ass(
+        sequence,
+        range.start_ms,
+        range.end_ms,
+        size.0,
+        size.1,
+        &ass_path,
+    )
+    .unwrap_or(false);
+
+    // —— 起 ffmpeg：视频裸流走 stdin，音频有就多挂一路输入 —— //
+    let ffmpeg = decode::locate_ffmpeg()
+        .ok_or_else(|| "没找到 ffmpeg，无法编码导出".to_string())?;
+    let mut command = Command::new(&ffmpeg);
+    command.args(["-y", "-v", "error"]).args([
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgba",
+        "-s",
+        &format!("{}x{}", size.0, size.1),
+        "-r",
+        &format!("{frame_rate:.6}"),
+        "-i",
+        "pipe:0",
+    ]);
+    if has_audio {
+        command.args([
+            "-f",
+            "f32le",
+            "-ar",
+            &MIX_SAMPLE_RATE.to_string(),
+            "-ac",
+            "2",
+            "-i",
+        ]);
+        command.arg(&pcm_path);
+        command.args(["-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "192k"]);
+    }
+    command.args(["-c:v", video_encoder, "-pix_fmt", "yuv420p"]);
+    if video_encoder.starts_with("libx26") {
+        command.args(["-preset", "veryfast", "-crf", "20"]);
+    } else {
+        let bitrate = preset.bitrate_kbps.max(500);
+        command.args(["-b:v", &format!("{bitrate}k")]);
+        if video_encoder.ends_with("_nvenc") {
+            command.args(["-rc", "vbr"]);
+        }
+    }
+    if has_subtitles {
+        // 切到缓存目录 + 只用文件名，避开 Windows 路径在 subtitles 滤镜里的两层转义
+        command.current_dir(cache_dir);
+        command.args(["-vf", &format!("subtitles=mcp-sub-{job_id}.ass")]);
+    }
+    command
+        .args(["-movflags", "+faststart"])
+        .arg(output)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = match command.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_file(&pcm_path);
+            return Err(format!("启动 ffmpeg 编码器失败：{e}"));
+        }
+    };
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "ffmpeg stdin 不可写".to_string())?;
+
+    // —— 逐帧渲染 —— //
+    let frame_ms = 1000.0 / frame_rate;
+    let mut done: u64 = 0;
+    let mut failure: Option<String> = None;
+
+    for index in 0..total_frames {
+        let time_ms = range.start_ms + index as f64 * frame_ms;
+        let plan = match render::plan_frame(project, &sequence.id, time_ms, size, keyframes) {
+            Ok(p) => p,
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
+        };
+        let frame = match render::render_plan(&plan) {
+            Ok(f) => f,
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
+        };
+        let rgba = render::frame_to_rgba8(&frame);
+        if stdin.write_all(&rgba).is_err() {
+            failure = Some("编码器提前退出，无法继续写入画面".to_string());
+            break;
+        }
+        done += 1;
+        if done % 10 == 0 || done == total_frames {
+            on_progress(done, total_frames, "导出中");
+        }
+    }
+
+    if let Some(err) = failure {
+        let _ = stdin.write_all(&[]);
+        drop(stdin);
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_file(&pcm_path);
+        let _ = std::fs::remove_file(output);
+        return Err(format!("导出失败：{err}"));
+    }
+
+    drop(stdin);
+    let status = child
+        .wait()
+        .map_err(|e| format!("等待编码器退出出错：{e}"))?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&pcm_path);
+        let _ = std::fs::remove_file(output);
+        return Err("编码器异常退出，请检查磁盘空间后重试".to_string());
+    }
+    let _ = std::fs::remove_file(&pcm_path);
+    on_progress(total_frames, total_frames, "已完成");
+
+    Ok(ExportResult {
+        output: output.to_string_lossy().into_owned(),
+        frames: done,
+        width: size.0,
+        height: size.1,
+        has_audio,
+        has_subtitles,
+    })
+}
+
 /// 取消收尾：杀编码器、删半成品、删临时混音，进度报「已取消」。
 fn finish_cancelled(
     mut child: Child,

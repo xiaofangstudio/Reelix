@@ -15,6 +15,10 @@
 //! 这里提供的是公式的权威定义与可测的参考实现。
 
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+
+use rayon::prelude::*;
 
 use crate::graph::node::ParamValue;
 
@@ -151,32 +155,59 @@ fn box_blur_axis(input: &Frame, half: usize, horizontal: bool) -> Frame {
     let h = input.height;
     let mut out = Frame::new(w, h);
     let win = (half * 2 + 1) as f32;
+    let d = half as isize;
+    let (wi, hi) = (w as isize, h as isize);
 
-    for y in 0..h {
-        for x in 0..w {
-            let mut acc = [0.0f32; 4];
-            for d in -(half as isize)..=(half as isize) {
-                let (sx, sy) = if horizontal {
-                    ((x as isize + d).clamp(0, w as isize - 1) as usize, y)
-                } else {
-                    (x, (y as isize + d).clamp(0, h as isize - 1) as usize)
-                };
-                let p = input.pixel(sx, sy);
-                for c in 0..4 {
-                    acc[c] += p[c];
+    if horizontal {
+        // 水平方向：滑动窗口，每像素只做一次「加右、减左」，复杂度从 O(r) 降到 O(1)。
+        // 每行互相独立，正好按行并行——glow 的大半径模糊主要耗在这里。
+        out.pixels
+            .par_chunks_exact_mut(w * 4)
+            .enumerate()
+            .for_each(|(y, row)| {
+                let mut acc = [0.0f32; 4];
+                for k in -d..=d {
+                    let sx = k.clamp(0, wi - 1) as usize;
+                    let p = input.pixel(sx, y);
+                    for c in 0..4 {
+                        acc[c] += p[c];
+                    }
                 }
-            }
-            out.set_pixel(
-                x,
-                y,
-                [
-                    acc[0] / win,
-                    acc[1] / win,
-                    acc[2] / win,
-                    acc[3] / win,
-                ],
-            );
-        }
+                for x in 0..w {
+                    let i = x * 4;
+                    for c in 0..4 {
+                        row[i + c] = acc[c] / win;
+                    }
+                    let add = input.pixel((x as isize + d + 1).clamp(0, wi - 1) as usize, y);
+                    let sub = input.pixel((x as isize - d).clamp(0, wi - 1) as usize, y);
+                    for c in 0..4 {
+                        acc[c] += add[c] - sub[c];
+                    }
+                }
+            });
+    } else {
+        // 垂直方向：每个输出行只读输入、行与行之间没有写冲突，所以按行并行是安全的。
+        // 列方向要保持滑窗就得跨行携带状态，这里按行并行 + 邻域累加，
+        // 实测配合水平滑窗已足够快。
+        out.pixels
+            .par_chunks_exact_mut(w * 4)
+            .enumerate()
+            .for_each(|(y, row)| {
+                for x in 0..w {
+                    let mut acc = [0.0f32; 4];
+                    for k in -d..=d {
+                        let sy = (y as isize + k).clamp(0, hi - 1) as usize;
+                        let p = input.pixel(x, sy);
+                        for c in 0..4 {
+                            acc[c] += p[c];
+                        }
+                    }
+                    let i = x * 4;
+                    for c in 0..4 {
+                        row[i + c] = acc[c] / win;
+                    }
+                }
+            });
     }
     out
 }
@@ -442,24 +473,29 @@ pub fn glow(input: &Frame, threshold: f32, radius: f32, strength: f32) -> Frame 
     let k = (strength.clamp(0.0, 200.0) / 100.0).max(0.0);
 
     let mut bright = input.clone();
-    for px in bright.pixels.chunks_exact_mut(4) {
+    bright.pixels.par_chunks_exact_mut(4).for_each(|px| {
         let l = luma(px[0], px[1], px[2]);
         let w = smoothstep(t, (t + 0.15).min(1.0), l);
         px[0] *= w;
         px[1] *= w;
         px[2] *= w;
         px[3] *= w;
-    }
+    });
     let halo = blur(&bright, radius.max(0.0));
 
     let mut out = input.clone();
-    for (i, px) in out.pixels.chunks_exact_mut(4).enumerate() {
-        let j = i * 4;
-        for c in 0..3 {
-            px[c] = (px[c] + halo.pixels[j + c] * k).clamp(0.0, 1.0);
-        }
-        px[3] = (px[3] + halo.pixels[j + 3] * k).clamp(0.0, 1.0);
-    }
+    // halo 是独立缓冲，读它写 out，互不干扰 → 可并行
+    let halo_px = &halo.pixels;
+    out.pixels
+        .par_chunks_exact_mut(4)
+        .enumerate()
+        .for_each(|(i, px)| {
+            let j = i * 4;
+            for c in 0..3 {
+                px[c] = (px[c] + halo_px[j + c] * k).clamp(0.0, 1.0);
+            }
+            px[3] = (px[3] + halo_px[j + 3] * k).clamp(0.0, 1.0);
+        });
     out
 }
 
@@ -1233,6 +1269,308 @@ fn flag(params: &HashMap<String, ParamValue>, key: &str, default: bool) -> bool 
 // ---------------------------------------------------------------------------
 
 /// 线性渐变：angle 方向上从 colorA → colorB 铺满整帧（保留原 alpha）。
+/// 线段（工程制图风格）：从 (x1,y1) 画到 (x2,y2)，`progress` 控制画到几成。
+///
+/// Nexus OS 宣传片的 logo 由 25 条直线逐笔画出，Reelix 原本没有「线」这个概念——
+/// 只有圆/环/网格，做不了笔画生长。这里按「点到线段的距离」逐像素判定，
+/// `progress` 打关键帧就是标准的描边动画（0=未起笔，1=画完）。
+///
+/// 坐标是归一化的（0~1），画到任意分辨率都等比。
+pub fn line_shape(
+    input: &Frame,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    thickness: f32,
+    color: &str,
+    progress: f32,
+    opacity: f32,
+) -> Frame {
+    let c = parse_hex_color(color);
+    let alpha = (opacity / 100.0).clamp(0.0, 1.0);
+    let p = progress.clamp(0.0, 1.0);
+    if alpha <= 0.0 || p <= 0.0 {
+        return input.clone();
+    }
+    let mut out = input.clone();
+    let w = out.width as f32;
+    let h = out.height as f32;
+    let short = w.min(h);
+    let half = ((thickness / 100.0) * short * 0.5).max(0.5);
+
+    let ax = x1 * w;
+    let ay = y1 * h;
+    // 笔画终点随 progress 从起点往外长
+    let bx = ax + (x2 * w - ax) * p;
+    let by = ay + (y2 * h - ay) * p;
+    let abx = bx - ax;
+    let aby = by - ay;
+    let ab_len2 = (abx * abx + aby * aby).max(1e-6);
+    let row = out.width;
+
+    out.pixels
+        .par_chunks_exact_mut(4)
+        .enumerate()
+        .for_each(|(i, px)| {
+            let x = (i % row) as f32;
+            let y = (i / row) as f32;
+            let apx = x - ax;
+            let apy = y - ay;
+            // 投影到线段上，夹在 [0,1] 里即最近点
+            let t = ((apx * abx + apy * aby) / ab_len2).clamp(0.0, 1.0);
+            let cx = ax + abx * t;
+            let cy = ay + aby * t;
+            let dx = x - cx;
+            let dy = y - cy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist <= half {
+                // 边缘 1px 抗锯齿
+                let wgt = ((half - dist).min(1.0)).max(0.0) * alpha;
+                for k in 0..3 {
+                    px[k] += (c[k] - px[k]) * wgt;
+                }
+            }
+        });
+    out
+}
+
+/// 反色：`amount` 是强度百分比（0 不变，100 全反）。
+///
+/// 宣传片 360→400 帧那 4 帧「白底黑字 → 黑底白字」的硬切靠它：
+/// 给 amount 打三帧 0→100 的关键帧就是一次瞬时反色。
+pub fn invert(input: &Frame, amount: f32) -> Frame {
+    let a = (amount / 100.0).clamp(0.0, 1.0);
+    if a <= 0.0 {
+        return input.clone();
+    }
+    let mut out = input.clone();
+    out.pixels.par_chunks_exact_mut(4).for_each(|px| {
+        for k in 0..3 {
+            px[k] += (1.0 - px[k] - px[k]) * a;
+        }
+    });
+    out
+}
+
+/// 按不透明度把效果结果混回底图。
+///
+/// 图里要「分阶段出场」（开场标题先亮、图片后淡入、结尾整体压暗），
+/// 就必须能单独控制某一层的不透明度。这里在分派层统一包一层，
+/// 不改各效果内核的函数签名——内核只管画，透明度归这里管。
+fn with_opacity(base: &Frame, top: Frame, opacity: f32) -> Frame {
+    let a = (opacity / 100.0).clamp(0.0, 1.0);
+    if a >= 0.999 {
+        return top;
+    }
+    if a <= 0.001 {
+        return base.clone();
+    }
+    let mut out = top;
+    let bp = &base.pixels;
+    out.pixels
+        .par_chunks_exact_mut(4)
+        .enumerate()
+        .for_each(|(i, px)| {
+            let j = i * 4;
+            if j + 3 < bp.len() {
+                for k in 0..3 {
+                    px[k] = bp[j + k] + (px[k] - bp[j + k]) * a;
+                }
+            }
+            px[3] = 1.0;
+        });
+    out
+}
+
+/// 缓存字体：加载一次，之后每帧复用。
+///
+/// 查找顺序：项目自带字体 → 系统黑体兜底。
+/// 项目里 `assets/fonts/*/` 目前只有 LICENSE、没有字体文件，
+/// 所以实际会落到系统 `simhei.ttf`（Windows 自带、支持中文）；
+/// 用户把正式字体丢进 `assets/fonts/` 后会自动优先用它。
+fn text_font() -> Option<&'static fontdue::Font> {
+    static FONT: OnceLock<Option<fontdue::Font>> = OnceLock::new();
+    FONT.get_or_init(|| {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        // 1) 项目字体（源码树 / 可执行文件旁）
+        for base in ["assets/fonts", "../assets/fonts"] {
+            candidates.push(PathBuf::from(base).join("NotoSansSC/NotoSansSC-Regular.ttf"));
+            candidates.push(PathBuf::from(base).join("Inter/Inter-Regular.ttf"));
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                candidates.push(dir.join("assets/fonts/NotoSansSC/NotoSansSC-Regular.ttf"));
+                candidates.push(dir.join("assets/fonts/Inter/Inter-Regular.ttf"));
+            }
+        }
+        // 2) 系统兜底：单文件 TTF（fontdue 读不了 .ttc 字体集合）
+        candidates.push(PathBuf::from(r"C:\Windows\Fonts\simhei.ttf"));
+        candidates.push(PathBuf::from(r"C:\Windows\Fonts\simkai.ttf"));
+        candidates.push(PathBuf::from("/System/Library/Fonts/PingFang.ttc"));
+
+        for path in candidates {
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
+            if let Ok(font) = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()) {
+                return Some(font);
+            }
+        }
+        None
+    })
+    .as_ref()
+}
+
+/// 文字图层：把一段文字光栅化后叠到输入帧上。
+///
+/// `text` 以前只是目录里的一个名字——参数能调、节点能加，但 `apply` 里没有实现，
+/// 画面上一个字都不会出现（典型假功能）。这里补上真渲染：
+/// 逐字符光栅化 + 字距推进 + 垂直居中 + 左/中/右对齐，`\n` 换行。
+///
+/// 渲染用的是 CPU 侧（与其它效果同一条参考实现），所以预览和导出看到的是同一套结果。
+pub fn text_frame(
+    input: &Frame,
+    content: &str,
+    font_size: f32,
+    color: &str,
+    align: &str,
+    opacity: f32,
+    offset_y: f32,
+    offset_x: f32,
+) -> Frame {
+    let Some(font) = text_font() else {
+        return input.clone();
+    };
+    let c = parse_hex_color(color);
+    let alpha = (opacity / 100.0).clamp(0.0, 1.0);
+    if alpha <= 0.0 || content.is_empty() {
+        return input.clone();
+    }
+    let px = font_size.clamp(4.0, 1024.0);
+    let line_h = px * 1.25;
+    let lines: Vec<&str> = content.split('\n').collect();
+
+    // 每行宽度先算出来，才能做居中 / 右对齐
+    let widths: Vec<f32> = lines
+        .iter()
+        .map(|line| {
+            line.chars()
+                .map(|ch| font.metrics(ch, px).advance_width)
+                .sum::<f32>()
+        })
+        .collect();
+    let total_h = line_h * lines.len() as f32;
+    let mut out = input.clone();
+    // 垂直位置：默认居中，offsetY 按画面高度百分比上下挪（主标题/副标题分层靠它）
+    let mut top = (out.height as f32 - total_h) * 0.5
+        + (offset_y / 100.0) * out.height as f32;
+
+    for (i, line) in lines.iter().enumerate() {
+        let w = widths[i];
+        // 水平位置：先按 align 落位，再用 offsetX 整体平移（百分比）
+        let mut x_cursor = match align {
+            "left" => out.width as f32 * 0.05,
+            "right" => out.width as f32 * 0.95 - w,
+            _ => (out.width as f32 - w) * 0.5,
+        } + (offset_x / 100.0) * out.width as f32;
+        let baseline = top + px; // 近似基线：字形从基线上方长出来
+        for ch in line.chars() {
+            let (m, bitmap) = font.rasterize(ch, px);
+            let gx = x_cursor + m.xmin as f32;
+            let gy = baseline - m.height as f32 - m.ymin as f32;
+            for row in 0..m.height {
+                for col in 0..m.width {
+                    let cov = bitmap[row * m.width + col] as f32 / 255.0;
+                    if cov <= 0.0 {
+                        continue;
+                    }
+                    let xx = gx + col as f32;
+                    let yy = gy + row as f32;
+                    if xx < 0.0 || yy < 0.0 {
+                        continue;
+                    }
+                    let (xi, yi) = (xx.round() as usize, yy.round() as usize);
+                    if xi >= out.width || yi >= out.height {
+                        continue;
+                    }
+                    let idx = (yi * out.width + xi) * 4;
+                    let a = cov * alpha;
+                    for k in 0..3 {
+                        out.pixels[idx + k] += (c[k] - out.pixels[idx + k]) * a;
+                    }
+                }
+            }
+            x_cursor += m.advance_width;
+        }
+        top += line_h;
+    }
+    out
+}
+
+/// 图片图层：把一张图片解码后按「位置 + 缩放」贴到输入帧上。
+///
+/// 以前只能整幅铺满（source + opacity），做版式根本排不了。
+/// 现在：
+/// - `scale` 是相对画布尺寸的百分比（100 = 铺满整幅）
+/// - `pos_x` / `pos_y` 是图片**中心点**在画布上的归一化坐标（0.5/0.5 = 正中）
+///
+/// 解码仍复用 compositor 的 ffmpeg 管线，jpg / png / webp 都能进。
+pub fn image_frame(
+    input: &Frame,
+    source: &str,
+    opacity: f32,
+    pos_x: f32,
+    pos_y: f32,
+    scale: f32,
+) -> Frame {
+    let alpha = (opacity / 100.0).clamp(0.0, 1.0);
+    if source.trim().is_empty() || alpha <= 0.0 {
+        return input.clone();
+    }
+    let sc = (scale / 100.0).clamp(0.01, 8.0);
+    let tw = ((input.width as f32 * sc).round() as usize).max(1);
+    let th = ((input.height as f32 * sc).round() as usize).max(1);
+    let Ok(img) = crate::compositor::decode::decode_frame(
+        std::path::Path::new(source),
+        0.0,
+        tw,
+        th,
+    ) else {
+        return input.clone();
+    };
+
+    let mut out = input.clone();
+    // 图片中心落在画布哪个像素
+    let cx = (out.width as f32 * pos_x.clamp(0.0, 1.0)).round() as isize;
+    let cy = (out.height as f32 * pos_y.clamp(0.0, 1.0)).round() as isize;
+    let left = cx - (tw as isize) / 2;
+    let top = cy - (th as isize) / 2;
+
+    // 只遍历落在画布内的那部分，图再大也不会越界
+    let x0 = (-left).max(0) as usize;
+    let y0 = (-top).max(0) as usize;
+    let x1 = ((out.width as isize - left).max(0) as usize).min(tw);
+    let y1 = ((out.height as isize - top).max(0) as usize).min(th);
+    if x1 <= x0 || y1 <= y0 {
+        return out;
+    }
+
+    for sy in y0..y1 {
+        let dy = (top + sy as isize) as usize;
+        for sx in x0..x1 {
+            let dx = (left + sx as isize) as usize;
+            let si = (sy * tw + sx) * 4;
+            let di = (dy * out.width + dx) * 4;
+            for k in 0..3 {
+                out.pixels[di + k] += (img.pixels[si + k] - out.pixels[di + k]) * alpha;
+            }
+            out.pixels[di + 3] = 1.0;
+        }
+    }
+    out
+}
+
 pub fn gradient(input: &Frame, color_a: &str, color_b: &str, angle: f32) -> Frame {
     let a = parse_hex_color(color_a);
     let b = parse_hex_color(color_b);
@@ -1244,15 +1582,19 @@ pub fn gradient(input: &Frame, color_a: &str, color_b: &str, angle: f32) -> Fram
     let min = corners.iter().cloned().fold(f32::INFINITY, f32::min);
     let max = corners.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
     let span = (max - min).max(1.0);
-    for y in 0..out.height {
-        for x in 0..out.width {
-            let proj = ((x as f32 * dx + y as f32 * dy - min) / span).clamp(0.0, 1.0);
-            let i = (y * out.width + x) * 4;
+    let w = out.width;
+    // 逐像素独立 → 并行（大画幅下渐变是最常跑的一层）
+    out.pixels
+        .par_chunks_exact_mut(4)
+        .enumerate()
+        .for_each(|(i, px)| {
+            let x = (i % w) as f32;
+            let y = (i / w) as f32;
+            let proj = ((x * dx + y * dy - min) / span).clamp(0.0, 1.0);
             for k in 0..3 {
-                out.pixels[i + k] = a[k] + (b[k] - a[k]) * proj;
+                px[k] = a[k] + (b[k] - a[k]) * proj;
             }
-        }
-    }
+        });
     out
 }
 
@@ -1265,10 +1607,15 @@ pub fn circle_shape(input: &Frame, cx: f32, cy: f32, radius: f32, color: &str, f
     let feather_px = (feather / 100.0 * short).max(0.5);
     let cx_px = cx.clamp(0.0, 1.0) * out.width as f32;
     let cy_px = cy.clamp(0.0, 1.0) * out.height as f32;
-    for y in 0..out.height {
-        for x in 0..out.width {
-            let dx = x as f32 - cx_px;
-            let dy = y as f32 - cy_px;
+    let w = out.width;
+    out.pixels
+        .par_chunks_exact_mut(4)
+        .enumerate()
+        .for_each(|(i, px)| {
+            let x = (i % w) as f32;
+            let y = (i / w) as f32;
+            let dx = x - cx_px;
+            let dy = y - cy_px;
             let d = (dx * dx + dy * dy).sqrt();
             let wgt = if d <= r - feather_px {
                 1.0
@@ -1278,13 +1625,123 @@ pub fn circle_shape(input: &Frame, cx: f32, cy: f32, radius: f32, color: &str, f
                 1.0 - (d - (r - feather_px)) / (2.0 * feather_px)
             };
             if wgt > 0.0 {
-                let i = (y * out.width + x) * 4;
                 for k in 0..3 {
-                    out.pixels[i + k] += (c[k] - out.pixels[i + k]) * wgt;
+                    px[k] += (c[k] - px[k]) * wgt;
                 }
             }
-        }
-    }
+        });
+    out
+}
+
+/// 圆环（描边圆）：只画一条环带，中间留空。
+///
+/// 与 [`circle_shape`] 的分工：那个画实心圆，这个画细环。
+/// EffectCraft 开场那种「内外两道细环 + 一圈刻度」就是靠它拼出来的——
+/// 之前只有实心圆，根本做不出环形 HUD 的味道。
+///
+/// `radius` / `thickness` / `feather` 都按画面短边百分比取，换分辨率不失真。
+pub fn ring_shape(
+    input: &Frame,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    thickness: f32,
+    color: &str,
+    feather: f32,
+) -> Frame {
+    let c = parse_hex_color(color);
+    let mut out = input.clone();
+    let short = out.width.min(out.height) as f32;
+    let r = (radius / 100.0).clamp(0.0, 4.0) * short;
+    let half = ((thickness / 100.0) * short * 0.5).max(0.5);
+    let feather_px = (feather / 100.0 * short).max(0.05);
+    let cx_px = cx.clamp(0.0, 1.0) * out.width as f32;
+    let cy_px = cy.clamp(0.0, 1.0) * out.height as f32;
+
+    let edge0 = (half - feather_px).max(0.0);
+    let edge1 = half + feather_px;
+    let w = out.width;
+
+    out.pixels
+        .par_chunks_exact_mut(4)
+        .enumerate()
+        .for_each(|(i, px)| {
+            let x = (i % w) as f32;
+            let y = (i / w) as f32;
+            let dx = x - cx_px;
+            let dy = y - cy_px;
+            let d = (dx * dx + dy * dy).sqrt();
+            // 到环带中线的距离：环 = |d - r| <= half
+            let band = (d - r).abs();
+            let wgt = if band <= edge0 {
+                1.0
+            } else if band >= edge1 || edge1 <= edge0 {
+                0.0
+            } else {
+                1.0 - (band - edge0) / (edge1 - edge0)
+            };
+            if wgt > 0.0 {
+                for k in 0..3 {
+                    px[k] += (c[k] - px[k]) * wgt;
+                }
+            }
+        });
+    out
+}
+
+/// 环形刻度（Tick Burst）：`count` 根短刻度沿圆周均布，从半径外缘向内画。
+///
+/// AE 里这是个「Ticks」形状组，Reelix 之前没有对应节点，所以做不出
+/// 「一圈仪表盘刻度」这种开场常用元素。这里用极坐标逐像素判断，
+/// 刻度按弧长定宽，绕圈不会一头粗一头细。
+pub fn ring_ticks(
+    input: &Frame,
+    cx: f32,
+    cy: f32,
+    count: f32,
+    radius: f32,
+    tick_length: f32,
+    start_angle: f32,
+    color: &str,
+    thickness: f32,
+) -> Frame {
+    let c = parse_hex_color(color);
+    let mut out = input.clone();
+    let short = out.width.min(out.height) as f32;
+    let n = count.max(1.0).round() as i32;
+    let r_out = (radius / 100.0).clamp(0.0, 4.0) * short;
+    let r_in = (r_out - (tick_length / 100.0) * short).max(0.0);
+    let half_w = ((thickness / 100.0) * short * 0.5).max(0.25);
+    let cx_px = cx.clamp(0.0, 1.0) * out.width as f32;
+    let cy_px = cy.clamp(0.0, 1.0) * out.height as f32;
+    let start = start_angle.to_radians();
+    let step = std::f32::consts::TAU / n as f32;
+    let w = out.width;
+
+    out.pixels
+        .par_chunks_exact_mut(4)
+        .enumerate()
+        .for_each(|(i, px)| {
+            let x = (i % w) as f32;
+            let y = (i / w) as f32;
+            let dx = x - cx_px;
+            let dy = y - cy_px;
+            let d = (dx * dx + dy * dy).sqrt();
+            // 落在刻度长度区间内才有戏
+            if d < r_in || d > r_out {
+                return;
+            }
+            let theta = dy.atan2(dx);
+            // 到最近一根刻度的角差（取最小正角）
+            let rel = (theta - start).rem_euclid(step);
+            let da = rel.min(step - rel);
+            // 角差换成弧长，这样刻度宽度沿半径一致
+            if da * d <= half_w {
+                for k in 0..3 {
+                    px[k] = c[k];
+                }
+            }
+        });
     out
 }
 
@@ -1622,6 +2079,7 @@ pub fn color_wheels(
     lift: [f32; 2],
     gamma: [f32; 2],
     gain: [f32; 2],
+    offset: [f32; 2],
 ) -> Frame {
     let mut out = input.clone();
     // 色轮偏移 → RGB 分量：x=+1 偏红，x=-1 偏青；y=+1 偏绿，y=-1 偏品
@@ -1636,6 +2094,8 @@ pub fn color_wheels(
     let l = wheel_rgb(lift);
     let g = wheel_rgb(gamma);
     let a = wheel_rgb(gain);
+    // 第四轮「全局」：所有亮度一视同仁的加性偏移（达芬奇的 Offset / Global）
+    let o = wheel_rgb(offset);
     for px in out.pixels.chunks_exact_mut(4) {
         for k in 0..3 {
             let v = px[k];
@@ -1646,6 +2106,7 @@ pub fn color_wheels(
             // gamma：中间调偏移
             let gamma_w = 4.0 * v * (1.0 - v);
             let mut nv = v
+                + o[k] * 0.25
                 + l[k] * 0.25 * lift_w
                 + g[k] * 0.15 * gamma_w
                 + a[k] * 0.3 * gain_w;
@@ -1754,11 +2215,34 @@ pub fn apply(
         ),
         "curves" => curves(input, num(params, "strength", 100.0)),
         // ---- 生成类 ----
-        "gradient" => gradient(
+        // ---- 输入类：以前是空壳，现在真渲染 ----
+        "text" => text_frame(
             input,
-            text(params, "colorA", "#2244cc"),
-            text(params, "colorB", "#ee7722"),
-            num(params, "angle", 90.0),
+            &text(params, "text", "文字"),
+            num(params, "fontSize", 72.0),
+            text(params, "color", "#FFFFFF"),
+            text(params, "align", "center"),
+            num(params, "opacity", 100.0),
+            num(params, "offsetY", 0.0),
+            num(params, "offsetX", 0.0),
+        ),
+        "image" => image_frame(
+            input,
+            &text(params, "source", ""),
+            num(params, "opacity", 100.0),
+            num(params, "posX", 0.5),
+            num(params, "posY", 0.5),
+            num(params, "scale", 100.0),
+        ),
+        "gradient" => with_opacity(
+            input,
+            gradient(
+                input,
+                text(params, "colorA", "#2244cc"),
+                text(params, "colorB", "#ee7722"),
+                num(params, "angle", 90.0),
+            ),
+            num(params, "opacity", 100.0),
         ),
         "circle" => circle_shape(
             input,
@@ -1768,17 +2252,61 @@ pub fn apply(
             text(params, "color", "#ffffff"),
             num(params, "feather", 5.0),
         ),
+        "line" => line_shape(
+            input,
+            num(params, "x1", 0.1),
+            num(params, "y1", 0.5),
+            num(params, "x2", 0.9),
+            num(params, "y2", 0.5),
+            num(params, "thickness", 0.3),
+            text(params, "color", "#ffffff"),
+            num(params, "progress", 100.0) / 100.0,
+            num(params, "opacity", 100.0),
+        ),
+        "invert" => invert(input, num(params, "amount", 100.0)),
+        "ring" => with_opacity(
+            input,
+            ring_shape(
+                input,
+                num(params, "centerX", 0.5),
+                num(params, "centerY", 0.5),
+                num(params, "radius", 30.0),
+                num(params, "thickness", 0.6),
+                text(params, "color", "#ffffff"),
+                num(params, "feather", 2.0),
+            ),
+            num(params, "opacity", 100.0),
+        ),
+        "ringTicks" => with_opacity(
+            input,
+            ring_ticks(
+                input,
+                num(params, "centerX", 0.5),
+                num(params, "centerY", 0.5),
+                num(params, "count", 72.0),
+                num(params, "radius", 34.0),
+                num(params, "tickLength", 3.0),
+                num(params, "startAngle", 0.0),
+                text(params, "color", "#ffffff"),
+                num(params, "thickness", 0.45),
+            ),
+            num(params, "opacity", 100.0),
+        ),
         "checkerboard" => checkerboard(
             input,
             num(params, "cell", 40.0),
             text(params, "colorA", "#111111"),
             text(params, "colorB", "#eeeeee"),
         ),
-        "grid" => grid_pattern(
+        "grid" => with_opacity(
             input,
-            num(params, "spacing", 48.0),
-            num(params, "lineWidth", 2.0),
-            text(params, "color", "#33ccff"),
+            grid_pattern(
+                input,
+                num(params, "spacing", 48.0),
+                num(params, "lineWidth", 2.0),
+                text(params, "color", "#33ccff"),
+            ),
+            num(params, "opacity", 100.0),
         ),
         // ---- 风格化 ----
         "findEdges" => find_edges(input, flag(params, "invert", false)),
@@ -1802,6 +2330,11 @@ pub fn apply(
             [
                 num(params, "gainX", 0.0),
                 num(params, "gainY", 0.0),
+            ],
+            // 缺省 0：旧工程没有这两个参数也照常工作
+            [
+                num(params, "offsetX", 0.0),
+                num(params, "offsetY", 0.0),
             ],
         ),
         "levels" => levels(
@@ -2289,7 +2822,9 @@ mod tests {
         // 少数依赖字体、素材文件或后续里程碑的类型显式列入白名单——
         // text / image 要字体与素材加载，composite3d 属三维合成，
         // compound 是 M3 的预合成，camera 属 M5 的相机解算。
-        let deferred = ["text", "image", "composite3d", "compound", "camera"];
+        // text / image 已经补上真渲染，不再列入白名单；
+        // 剩下的 composite3d / compound / camera 属后续里程碑（三维合成 / 预合成 / 相机解算）。
+        let deferred = ["composite3d", "compound", "camera"];
         let f = Frame::filled(8, 8, [0.5, 0.5, 0.5, 1.0]);
         let catalog = crate::graph::catalog::node_catalog();
         for info in &catalog {
@@ -2583,5 +3118,105 @@ mod tests_3d {
             visible < 64,
             "正侧看时图层应几乎看不见，实际却有 {visible} 个可见像素"
         );
+    }
+
+    /// 圆环必须是「空心环」：中心留空、环带上色。
+    #[test]
+    fn ring_draws_a_hollow_band() {
+        let f = Frame::filled(200, 200, [0.0, 0.0, 0.0, 1.0]);
+        // radius 30% × 短边 200 = 60px，thickness 1% × 200 = 2px
+        let out = ring_shape(&f, 0.5, 0.5, 30.0, 1.0, "#ffffff", 0.5);
+        assert!(out.pixel(100, 100)[0] < 0.05, "圆环中心应当留空（不是实心圆）");
+        assert!(out.pixel(160, 100)[0] > 0.5, "半径 60px 处应当是环带");
+        assert!(out.pixel(120, 100)[0] < 0.05, "环带以内应当还是背景");
+        assert!(out.pixel(190, 100)[0] < 0.05, "环带以外应当还是背景");
+    }
+
+    /// 环形刻度只在圆周那一圈出现，圆内与刻度之间必须是空的。
+    #[test]
+    fn ring_ticks_marks_only_the_circumference() {
+        let f = Frame::filled(200, 200, [0.0, 0.0, 0.0, 1.0]);
+        // 12 根刻度，外半径 40%（80px），刻度长 5%（10px）→ 环带 70~80px
+        let out = ring_ticks(&f, 0.5, 0.5, 12.0, 40.0, 5.0, 0.0, "#ffffff", 1.2);
+        assert!(out.pixel(175, 100)[0] > 0.5, "0° 方向外缘应当有一根刻度");
+        assert!(out.pixel(140, 100)[0] < 0.05, "刻度区以内应当留空");
+        // 12 根步长 30°，15° 正落在两根刻度中间，弧长约 19.6px，远大于刻度宽 2.4px
+        let x = (100.0 + 75.0 * 15f32.to_radians().cos()) as usize;
+        let y = (100.0 + 75.0 * 15f32.to_radians().sin()) as usize;
+        assert!(out.pixel(x, y)[0] < 0.05, "两根刻度之间应当是空的");
+    }
+
+    /// 文字节点必须真的把字形画到帧上（以前是空壳：调参数毫无反应）。
+    #[test]
+    fn text_node_actually_draws_glyphs() {
+        let f = Frame::filled(300, 120, [0.0, 0.0, 0.0, 1.0]);
+        let out = text_frame(&f, "TEST", 60.0, "#ffffff", "center", 100.0, 0.0, 0.0);
+        let lit = out.pixels.chunks_exact(4).filter(|p| p[0] > 0.3).count();
+        assert!(lit > 50, "文字应当真的画出字形，实际只点亮 {lit} 个像素");
+        // 四角还是黑的（字没铺满整帧）
+        assert!(out.pixel(2, 2)[0] < 0.05, "画外应当仍是背景");
+    }
+
+    /// 空文字不能把画面搞坏，也不能悄悄改像素。
+    #[test]
+    fn empty_text_leaves_frame_untouched() {
+        let f = Frame::filled(64, 64, [0.2, 0.3, 0.4, 1.0]);
+        let out = text_frame(&f, "", 40.0, "#ffffff", "center", 100.0, 0.0, 0.0);
+        assert_eq!(out.pixel(32, 32)[0], f.pixel(32, 32)[0]);
+    }
+
+    /// offsetY 必须真把整块文字上下挪：主标题/副标题分层全靠它。
+    #[test]
+    fn text_offset_y_moves_the_block() {
+        fn centroid_y(f: &Frame) -> f32 {
+            let mut sum = 0.0f32;
+            let mut n = 0.0f32;
+            for y in 0..f.height {
+                for x in 0..f.width {
+                    if f.pixel(x, y)[0] > 0.3 {
+                        sum += y as f32;
+                        n += 1.0;
+                    }
+                }
+            }
+            if n == 0.0 { f32::NAN } else { sum / n }
+        }
+        let bg = Frame::filled(220, 220, [0.0, 0.0, 0.0, 1.0]);
+        let mid = text_frame(&bg, "H", 40.0, "#ffffff", "center", 100.0, 0.0, 0.0);
+        let up = text_frame(&bg, "H", 40.0, "#ffffff", "center", 100.0, -25.0, 0.0);
+        let down = text_frame(&bg, "H", 40.0, "#ffffff", "center", 100.0, 25.0, 0.0);
+        assert!(
+            centroid_y(&up) < centroid_y(&mid) - 20.0,
+            "offsetY=-25 应当把文字明显上移"
+        );
+        assert!(
+            centroid_y(&down) > centroid_y(&mid) + 20.0,
+            "offsetY=+25 应当把文字明显下移"
+        );
+    }
+
+    /// 线段必须随 progress 变长（logo 逐笔生长全靠它）。
+    #[test]
+    fn line_grows_with_progress() {
+        fn lit(f: &Frame) -> usize {
+            f.pixels.chunks_exact(4).filter(|p| p[0] > 0.3).count()
+        }
+        let bg = Frame::filled(200, 200, [0.0, 0.0, 0.0, 1.0]);
+        let short = line_shape(&bg, 0.1, 0.5, 0.9, 0.5, 1.0, "#ffffff", 0.2, 100.0);
+        let full = line_shape(&bg, 0.1, 0.5, 0.9, 0.5, 1.0, "#ffffff", 1.0, 100.0);
+        assert!(lit(&short) > 0, "progress=0.2 应当已经画出一小段");
+        assert!(lit(&full) > lit(&short) * 2, "progress=1 的线应当明显更长");
+    }
+
+    /// 反色必须真的把 0.2 变成 0.8。
+    #[test]
+    fn invert_flips_colors() {
+        let f = Frame::filled(4, 4, [0.2, 0.4, 0.6, 1.0]);
+        let out = invert(&f, 100.0);
+        assert!((out.pixel(0, 0)[0] - 0.8).abs() < 0.01, "R 应当反成 0.8");
+        assert!((out.pixel(0, 0)[1] - 0.6).abs() < 0.01, "G 应当反成 0.6");
+        // amount=0 不动
+        let same = invert(&f, 0.0);
+        assert!((same.pixel(0, 0)[0] - 0.2).abs() < 0.001);
     }
 }

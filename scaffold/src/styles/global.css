@@ -7647,3 +7647,106 @@ button.start-learn-link {
 button.start-learn-link:hover {
   text-decoration: underline;
 }
+
+/* ============ 欢迎页：窄窗口防溢出 ============ */
+/* 原来 .start-learn / .start-hero 都是 flex 但没开 wrap，
+   窗口一缩小按钮和标题就往外顶，超链接整行溢出卡片外。
+   这里统一补：换行 + 长词断行 + 窄屏缩字号。 */
+.start-welcome {
+  max-width: min(880px, 100%);
+  width: auto;
+}
+
+.start-hero {
+  flex-wrap: wrap;
+  row-gap: var(--rl-space-4);
+}
+
+/* flex 子项默认 min-width:auto，长文本会把容器顶爆 */
+.start-hero > * {
+  min-width: 0;
+}
+
+.start-hero-actions {
+  flex-wrap: wrap;
+}
+
+.start-brand {
+  overflow-wrap: break-word;
+  word-break: break-word;
+  line-height: 1.25;
+}
+
+.start-tagline {
+  overflow-wrap: break-word;
+}
+
+.start-learn {
+  flex-wrap: wrap;
+  row-gap: var(--rl-space-3);
+}
+
+/* 按钮默认 white-space:nowrap，长标题会直接顶出卡片 */
+.start-learn-link {
+  white-space: normal;
+  overflow-wrap: break-word;
+  text-align: left;
+  max-width: 100%;
+}
+
+@media (max-width: 720px) {
+  .start-screen {
+    padding: var(--rl-space-4);
+  }
+
+  .start-welcome {
+    padding: var(--rl-space-6);
+  }
+
+  .start-brand {
+    font-size: 20px;
+  }
+
+  .start-hero {
+    align-items: flex-start;
+    gap: var(--rl-space-4);
+  }
+}
+
+@media (max-width: 460px) {
+  .start-brand {
+    font-size: 17px;
+  }
+
+  .start-tagline {
+    font-size: 11px;
+  }
+}
+
+/* ============ 时间轴刻度尺（修复「时间码墙」） ============ */
+/* 症状：轨道区被一路竖排的 00:00:00:00 填满。
+   根因：JSX 里用了 .tick / .tick-label 并给内联 left，
+   但这两个类在 CSS 里**完全没有规则** —— 没有 position:absolute，
+   left 对内联元素无效，于是每帧一个标签、按文档流竖直堆下来。
+   .tl-ruler 本身是 position:sticky（已是定位元素），可直接当参照。 */
+.tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--rl-border);
+  pointer-events: none;
+}
+
+.tick-label {
+  position: absolute;
+  top: 4px;
+  padding-left: 3px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--rl-text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}

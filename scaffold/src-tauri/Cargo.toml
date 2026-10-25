@@ -1,6 +1,6 @@
 [package]
 name = "reelix"
-version = "0.1.0"
+version = "1.0.1"
 description = "特效合成软件（合成优先，剪辑内建）"
 authors = ["小方工作室"]
 license = "MIT"
@@ -32,6 +32,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wgpu = { version = "24", default-features = false, features = ["wgsl", "metal", "dx12", "naga-ir"] }
 pollster = "0.4"
+# 文字光栅化：文字节点（标题/字幕条）以前只有参数没有渲染，
+# 因为项目里只有字体 LICENSE、没有字体文件，也没有任何光栅化库。
+# fontdue 纯 Rust、无 C 依赖，能在不联网的前提下把字真画到帧上。
+fontdue = "0.9"
+# 像素级并行：效果内核全是「逐像素独立计算」，天生适合按行/按块并行。
+# 没有它，1280×720 每帧要 2.5 秒，30 秒片得跑半小时以上。
+rayon = "1"
 
 [features]
 # 桌面外壳：默认开。关掉它得到的是「只有纯逻辑、不含 tauri」的库。

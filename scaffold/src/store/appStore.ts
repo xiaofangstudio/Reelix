@@ -163,6 +163,10 @@ interface AppState {
   clipClipboard: Clip[];
   cutClips: () => void;
   copyClips: () => void;
+  /** 撤销（Ctrl+Z）。后端有完整撤销栈，这里只是转发。 */
+  undo: () => void;
+  /** 重做（Ctrl+Y / Ctrl+Shift+Z）。 */
+  redo: () => void;
   pasteClips: () => Promise<boolean>;
   /** 时间线上的多选集合。框选与 Shift 加选都写这里，末位是「主选中」 */
   selectedClipIds: Id[];
@@ -907,6 +911,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (picked.length === 0) return;
     set({ clipClipboard: picked });
     void import("./projectActions").then((m) => m.deleteSelectedClips());
+  },
+
+  /** 撤销：后端 history 模块本来就有完整撤销栈（push/undo/redo/jump），
+   *  只是一直没接到键盘上——Ctrl+Z 按下去毫无反应。这里补上转发。 */
+  undo: () => {
+    void import("./projectActions").then((m) => m.undo());
+  },
+
+  /** 重做：Ctrl+Y 或 Ctrl+Shift+Z */
+  redo: () => {
+    void import("./projectActions").then((m) => m.redo());
   },
 
   /** 复制：选中片段存进内部剪贴板，原件不动（PR 式 Copy） */

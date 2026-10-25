@@ -8,7 +8,7 @@
  * 选中不合规片段时整块显示引导文案，不出调色控件。
  *
  * 结构（左→右）：
- * 1. 参数区：三个色轮（阴影/中间调/高光，点盘拖动）+ 色阶五参数 + 快捷调节
+ * 1. 参数区：四个色轮（阴影/中间调/高光/全局，点盘拖动）+ 色阶五参数 + 快捷调节
  *    （曝光/对比/饱和/色温/色调/高光/阴影，走现有 grade 效果）
  * 2. 示波器：RGB 分量波形（从监视器当前帧实时统计，canvas 自绘）
  * 3. 颜色占比：色相环 12 桶占比条（同一帧数据）
@@ -318,6 +318,16 @@ export function ColorGradeControls(): React.ReactElement {
             onDrag={(x, y) => {
               setNum("colorWheels", "gainX", x);
               setNum("colorWheels", "gainY", y);
+            }}
+          />
+          {/* 第四轮「全局」：达芬奇的 Global / Offset——不分亮暗，整幅均匀偏色 */}
+          <ColorWheel
+            label="全局"
+            x={numParam("colorWheels", "offsetX", 0)}
+            y={numParam("colorWheels", "offsetY", 0)}
+            onDrag={(x, y) => {
+              setNum("colorWheels", "offsetX", x);
+              setNum("colorWheels", "offsetY", y);
             }}
           />
         </div>
