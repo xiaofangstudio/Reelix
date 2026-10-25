@@ -7972,3 +7972,30 @@ button.start-learn-link:hover {
 .settings-panes .settings-group:first-child {
   border-top: 0;
 }
+
+/* ============ 片段缩略图胶片条（瓦片） ============ */
+/* 症状：时间线上片段里一片空白，缩略图不显示。
+   根因：FilmCell / FilmStrip 用的 .clip-film、.clip-film-cell
+   在 CSS 里**完全没有规则**——div 没有宽高，即便 backgroundImage 拿到了也看不见。 */
+.clip-film {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--rl-radius-sm);
+  background: var(--rl-surface-2);
+}
+
+/* 剪映式瓦片：每 48px 一格，横向铺开，格数随片段宽度增长 */
+.clip-film-cell {
+  flex: 0 0 48px;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* 缩略图还没到位时的占位槽：中性底色，不画成“破损” */
+.clip-film-cell.empty {
+  background: var(--rl-surface-3);
+}

@@ -1297,6 +1297,9 @@ export function TimelineView() {
   const onRulerPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     setMenu(null);
+    // 拖动播放头：置位 scrubbing，Monitor 期间不重新解码/合成，
+    // 否则每帧 move 都触发一次 CPU 渲染，竖条会被拖得一卡一卡。
+    useAppStore.getState().setScrubbing(true);
     const ms = clamp(clientXToMs(e.clientX), 0, scrubMaxMs);
     setPlayhead(snapToFrame(ms, frameRate));
     beginDrag(e.pointerId, e.clientX, e.clientY, {
@@ -1615,7 +1618,11 @@ export function TimelineView() {
     contentRef.current?.releasePointerCapture(e.pointerId);
     dragBatch(null);
 
-    if (session.kind === "scrub") return;
+    if (session.kind === "scrub") {
+      // 松手：退出拖动态，Monitor 收到 playheadMs 变化后才渲染最终那一帧
+      useAppStore.getState().setScrubbing(false);
+      return;
+    }
 
     if (session.kind === "marquee") {
       if (session.moved) {

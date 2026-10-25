@@ -66,7 +66,7 @@ export default function Splash({ onDone }: { onDone: () => void }) {
     <div className={"splash" + (fading ? " splash--fading" : "")} style={{ backgroundImage: `url(${bg})` }}>
       <div className="splash__inner">
         <div className="splash__name">Reelix</div>
-        <div className="splash__meta">Reelix 1.0.7 · 小方工作室 · 特效合成软件，剪辑是它的附属能力</div>
+        <div className="splash__meta">Reelix 1.0.8 · 小方工作室 · 特效合成软件，剪辑是它的附属能力</div>
         <div className="splash__loading">
           {STEPS[Math.min(step, STEPS.length - 1)]}…
           <span className="splash__pct">{pct}%</span>
@@ -76,7 +76,7 @@ export default function Splash({ onDone }: { onDone: () => void }) {
       {/* 底部信息条：左版权、右版本与跳过提示 */}
       <div className="splash__bottom">
         <span className="splash__bottom-copy">© 2026 小方工作室 · XiaoFang Studio</span>
-        <span className="splash__bottom-ver">Reelix 1.0.7 · 本地渲染引擎（ffmpeg）· 按 ESC 跳过</span>
+        <span className="splash__bottom-ver">Reelix 1.0.8 · 本地渲染引擎（ffmpeg）· 按 ESC 跳过</span>
       </div>
     </div>
   );

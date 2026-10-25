@@ -210,6 +210,9 @@ interface AppState {
   showStartScreen: () => void;
   /** 收起开场界面，回到编辑器 */
   hideStartScreen: () => void;
+  /** 播放头正在拖动：拖动期间监视器不重新解码，松手才出图 */
+  scrubbing: boolean;
+  setScrubbing: (v: boolean) => void;
   toggleTheme: () => void;
   /** 偏好设置面板（模态）开关：顶栏按钮 / 编辑菜单 / Ctrl+, 共用 */
   settingsOpen: boolean;
@@ -657,6 +660,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
   showStartScreen: () => set({ startScreen: true }),
   hideStartScreen: () => set({ startScreen: false }),
+  scrubbing: false,
+  setScrubbing: (v) => set({ scrubbing: v }),
   toggleTheme: () => set({ theme: get().theme === "dark" ? "light" : "dark" }),
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   setTutorialOpen: (open) => set({ tutorialOpen: open }),

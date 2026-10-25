@@ -34,6 +34,7 @@ export function Monitor() {
   // 未打开工程时 sequence 为 undefined，界面显示引导而不是崩掉
   const sequence = useCurrentSequence();
   const playheadMs = useAppStore((s) => s.playheadMs);
+  const scrubbing = useAppStore((s) => s.scrubbing);
   const setPlayhead = useAppStore((s) => s.setPlayhead);
   const playing = useAppStore((s) => s.playing);
   const playbackRate = useAppStore((s) => s.playbackRate);
@@ -210,9 +211,12 @@ export function Monitor() {
   // 素材预览模式下不看序列，直接跳过
   useEffect(() => {
     if (!sequence || previewAsset) return;
+    // 拖动播放头时先不渲染：只让播放头线走，画面保持上一帧。
+    // 松手后 scrubbing 变 false，这个 effect 重新跑，才渲染最终那一帧。
+    if (scrubbing) return;
     wantedRef.current = Math.max(0, playheadMs);
     void pump();
-  }, [sequence, playheadMs, pump, previewAsset]);
+  }, [sequence, playheadMs, pump, previewAsset, scrubbing]);
 
   // 新画面铺上之后回收上一张 objectURL
   const handleFrameLoad = useCallback(() => {
