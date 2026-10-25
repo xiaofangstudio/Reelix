@@ -197,6 +197,35 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           <div className="settings-body settings-loading">正在读取设置…</div>
         ) : (
           <div className="settings-body">
+            {/* 左侧分类导航（用户要求：和别的设置面板一样左右分栏，不要一坨广告） */}
+            <nav className="settings-nav">
+              {(
+                [
+                  ["外观", 0],
+                  ["预览", 1],
+                  ["工程", 2],
+                  ["缓存", 3],
+                  ["编辑默认", 4],
+                  ["新建工程", 5],
+                  ["时间线", 6],
+                  ["语言", 7],
+                ] as const
+              ).map(([label, idx]) => (
+                <button
+                  key={label}
+                  type="button"
+                  className="settings-nav-item"
+                  onClick={() => {
+                    const panes = document.querySelector(".settings-panes");
+                    const group = panes?.querySelectorAll(".settings-group")[idx];
+                    group?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
+            <div className="settings-panes">
             {/* 主题：浅色（默认）/ 深色。改完立即换肤并记住 */}
             <section className="settings-group">
               <div className="group-title">主题</div>
@@ -445,6 +474,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
               </div>
               <div className="settings-note">当前版本只有简体中文。</div>
             </section>
+            </div>
           </div>
         )}
 

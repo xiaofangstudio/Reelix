@@ -343,7 +343,12 @@ export async function openSampleProject(): Promise<boolean> {
     const path = `${home}\\Documents\\Reelix 示例工程.reelix`;
     const json = JSON.stringify(buildSampleProject(), null, 2);
     await invoke("write_text_file", { path, contents: json });
-    await invoke("open_project", { path });
+    // open_project 会把整个工程返回，直接同步进 store 最稳——
+    // 不再依赖 refreshProject 是否愿意拉（它以前有前置判断，会把这条路径整死）。
+    const opened = await invoke<Record<string, unknown>>("open_project", { path });
+    if (opened) {
+      useAppStore.getState().syncProject(opened as never);
+    }
     await refreshProject();
     // 关键一步：工程打开了但欢迎页没关，界面上就一直是「选择项目」那一屏。
     // 编辑器是否显示取决于 project !== null && !startScreen，两个条件缺一不可。

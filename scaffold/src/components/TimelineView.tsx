@@ -559,7 +559,7 @@ function CurveLane({ clip, pxPerMs }: { clip: Clip; pxPerMs: number }) {
               />
             );
           })}
-          {/* BLURRR 式区间：两关键帧之间的绿色半透明带，右键选缓动预设 */}
+          {/* BLURRR 式区间：两关键帧之间的蓝色半透明带，点选整段 / 右键选缓动 */}
           {Array.from(byEffect.entries()).map(([effectId, list]) => {
             const sorted = list.slice().sort((a, b) => a.timeMs - b.timeMs);
             return sorted.slice(0, -1).map((k, i) => {
@@ -570,12 +570,13 @@ function CurveLane({ clip, pxPerMs }: { clip: Clip; pxPerMs: number }) {
                 <g key={`seg-${effectId}-${k.id}`}>
                   <rect
                     className="tl-curve-seg"
+                    onClick={() => selectEffect(effectId)}
                     x={x0}
                     y={2}
                     width={w}
                     height={CURVE_ROW_H - 4}
-                    fill="rgba(87, 192, 143, 0.16)"
-                    stroke="rgba(38, 115, 79, 0.35)"
+                    fill="rgba(74, 144, 226, 0.18)"
+                    stroke="rgba(56, 116, 203, 0.55)"
                     strokeWidth={1}
                     rx={3}
                     onContextMenu={(e) => {
@@ -870,25 +871,41 @@ export function TimelineView() {
         el.scrollLeft += e.deltaY;
         return;
       }
-      // 普通滚轮 = 左右移动时间线（用户要求：鼠标挪动到顶上滚动就左右移动）
+      // 普通滚轮 = 上下滚轨道。
+      // 以前这里写的是 scrollLeft：滚轮永远只能左右走，上下滚必须跑去左边轨头，
+      // 加上轨头与内容各滚各的，于是「分不清是左右滚还是上下滚」。
       e.preventDefault();
-      el.scrollLeft += e.deltaY;
+      el.scrollTop += e.deltaY;
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, [sequence?.tracks.length]);
 
-  /** 左侧轨道名跟着右侧内容一起纵向滚动（上下永远对齐）。 */
+  /** 左侧轨道名与右侧内容纵向**双向**同步（以前只有右→左，左轨头自己滚时右边不跟）。 */
   useEffect(() => {
     const el = scrollRef.current;
     const gutter = gutterBodyRef.current;
     if (!el || !gutter) return;
-    const sync = () => {
+    let syncing = false;
+    const fromContent = () => {
+      if (syncing) return;
+      syncing = true;
       gutter.scrollTop = el.scrollTop;
+      syncing = false;
     };
-    sync();
-    el.addEventListener("scroll", sync, { passive: true });
-    return () => el.removeEventListener("scroll", sync);
+    const fromGutter = () => {
+      if (syncing) return;
+      syncing = true;
+      el.scrollTop = gutter.scrollTop;
+      syncing = false;
+    };
+    fromContent();
+    el.addEventListener("scroll", fromContent, { passive: true });
+    gutter.addEventListener("scroll", fromGutter, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", fromContent);
+      gutter.removeEventListener("scroll", fromGutter);
+    };
   }, [sequence?.tracks.length]);
 
   /** 右键菜单：点外面或按 Esc 关掉。 */

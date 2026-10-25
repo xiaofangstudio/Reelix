@@ -7750,3 +7750,225 @@ button.start-learn-link:hover {
   pointer-events: none;
   user-select: none;
 }
+
+/* ============ 欢迎页：模板卡片 / 最近使用 防溢出 ============ */
+/* 症状：模板卡片的标签文字顶出卡片，压到下面「学习」标题上；
+   最近使用区的缩略图骨架和文字互相重叠。
+   根因是卡片没有固定宽度、label 不截断，整个 section 也不裁剪溢出。 */
+.start-section {
+  overflow: hidden;
+}
+
+.start-template {
+  flex: 0 0 auto;
+  width: 132px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.start-template-frame {
+  display: block;
+  width: 100%;
+  flex: 0 0 auto;
+}
+
+.start-template-label {
+  display: block;
+  max-width: 100%;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 最近使用：不要固定高度裁切，让卡片自己撑开 */
+.start-recent-scroll {
+  max-height: none;
+  overflow: visible;
+}
+
+.start-recent {
+  overflow: hidden;
+}
+
+/* ============ 素材箱：导入按钮必须有固定占位 ============ */
+/* 症状：素材页签里的「＋ 导入素材」看不见了。
+   .bin-content 是 flex column + overflow:hidden，导入行没有 flex-shrink:0，
+   被下面的列表一挤就没了高度。这里给它固定占位、按钮撑满一行。 */
+.bin-import-row {
+  flex: 0 0 auto;
+  padding: 6px var(--rl-space-2);
+}
+
+.bin-import-row .bin-tab-action {
+  display: block;
+  width: 100%;
+  height: 26px;
+  line-height: 26px;
+  padding: 0 8px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============ 关键帧菱形 / 标记旗子 / 区间带 ============ */
+/* .kf-dot 之前**完全没有 CSS**，于是关键帧的按钮和标记的 8×8 绿方块长得一模一样。
+   这里给它标准的菱形造型（旋转 45°），和标记彻底区分开。 */
+.kf-dot {
+  position: absolute;
+  left: 5px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+  padding: 0;
+  border: 1px solid var(--rl-accent);
+  background: transparent;
+  border-radius: 1px;
+  transform: rotate(45deg);
+  cursor: pointer;
+  opacity: 0.8;
+  z-index: 2;
+}
+
+.kf-dot:hover {
+  opacity: 1;
+  background: var(--rl-accent-soft);
+}
+
+.kf-dot.on {
+  background: var(--rl-accent);
+  opacity: 1;
+}
+
+/* 标记改成「小旗子」三角，一眼就能和关键帧菱形分开 */
+.tl-marker-flag {
+  width: 0;
+  height: 0;
+  margin-top: 1px;
+  background: none;
+  border-radius: 0;
+  border-left: 8px solid var(--rl-accent);
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+}
+
+/* 关键帧区间带：用户要求蓝色（原来是品牌绿，容易和选中态混淆） */
+.tl-curve-seg:hover {
+  fill: rgba(74, 144, 226, 0.30);
+}
+
+.tl-curve-seg-label {
+  fill: #4a90e2;
+}
+
+/* ============ ScrubNumber：拖动/滚轮/直填 的数值控件 ============ */
+.scrub-num {
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  border: var(--rl-border-w) solid var(--rl-border);
+  border-radius: 4px;
+  background: var(--rl-surface-2);
+  cursor: ew-resize;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--rl-text);
+}
+
+.scrub-num:hover {
+  border-color: var(--rl-accent-line);
+}
+
+.scrub-num.editing {
+  cursor: text;
+  border-color: var(--rl-accent);
+}
+
+.scrub-num-value {
+  pointer-events: none;
+}
+
+.scrub-num-input {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+}
+
+/* ============ 偏好设置：左右分栏（左侧分类 / 右侧内容） ============ */
+/* 原先是所有分组竖着堆在一个约 520px 的窄框里，看起来像一张长广告。
+   改成左侧导航 + 右侧滚动内容，和编辑器其它面板一致。 */
+.settings-dialog {
+  width: min(880px, 94vw);
+  height: min(640px, 88vh);
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+
+.settings-nav {
+  width: 152px;
+  flex: 0 0 152px;
+  padding: 10px 0;
+  border-right: var(--rl-border-w) solid var(--rl-border);
+  overflow-y: auto;
+  background: var(--rl-surface-2);
+}
+
+.settings-nav-item {
+  display: block;
+  width: 100%;
+  padding: 9px 16px;
+  border: 0;
+  background: transparent;
+  color: var(--rl-text-dim);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-nav-item:hover {
+  background: var(--rl-surface-3);
+  color: var(--rl-text);
+}
+
+.settings-nav-item:focus-visible {
+  outline: none;
+  background: var(--rl-accent-soft);
+  color: var(--rl-accent);
+}
+
+.settings-panes {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 4px 20px 18px;
+  scrollbar-width: thin;
+}
+
+/* 右边的分组不再需要顶部大间距，省出高度给内容 */
+.settings-panes .settings-group:first-child {
+  border-top: 0;
+}

@@ -9,9 +9,10 @@
  * 片段勾选「启用 3D」后多出六组属性（位置/旋转/缩放/方向/锚点/接受光照）。
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ColorGradeControls } from "./ColorGradePanel";
 import { SpeedCurveEditor } from "./SpeedCurveEditor";
+import { ScrubNumber } from "./ScrubNumber";
 import { useAppStore, useAssets, useCurrentSequence, useSelectedClip } from "../store/appStore";
 import { msToTimecode } from "../core/timecode";
 import type { Layer3DOrientation } from "../types/project";
@@ -65,9 +66,17 @@ export function PropertiesPanel() {
    * 切换片段时页签回落到「基础」。
    */
   const [propTab, setPropTab] = useState<string>("basic");
+  // 只在「真的换了另一个片段」时回落到基础页。
+  // 以前写成 useEffect(..., [clip?.id])：clip 对象一旦因为刷新而重新创建，
+  // 这个 effect 就会把页签打回 basic —— 表现为「怎么点都只有基础那一页」。
+  const prevClipIdRef = useRef<string | null>(null);
   useEffect(() => {
-    setPropTab("basic");
-  }, [clip?.id]);
+    const nextId = clip?.id ?? null;
+    if (prevClipIdRef.current !== nextId) {
+      prevClipIdRef.current = nextId;
+      setPropTab("basic");
+    }
+  });
 
   // 没有工程 / 序列时也能显示面板骨架，时间码用默认帧率兜底
   const frameRate = sequence?.frameRate ?? 25;
@@ -96,9 +105,10 @@ export function PropertiesPanel() {
           <div className="prop-tabs">
             {[
               ["basic", "基础", true],
-              ["grade", "调节", !isCameraClip],
-              ["speed", "变速", !isCameraClip],
-              ["audio", "音频", !isCameraClip],
+              ["grade", "调节", true],
+              ["speed", "变速", true],
+              ["audio", "音频", true],
+              // 只有 3D 对摄像机轨没意义（摄像机本身就是视角）
               ["3d", "3D", !isCameraClip],
             ]
               .filter(([, , show]) => show)
@@ -324,24 +334,23 @@ export function PropertiesPanel() {
                   const fx = (effects[clip.id] ?? []).find((e) => e.type === type);
                   const val = fx ? Number(fx.params.find((p) => p.key === key)?.value ?? 0) : type === "opacity" ? 100 : key === "scale" ? 100 : 0;
                   return (
-                    <div key={type + key} className="prop-row" style={{ gridTemplateColumns: "90px 1fr 44px" }}>
+                    <div key={type + key} className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
                       <span className="label">{label}</span>
-                      <input
-                        type="range"
+                      {/* 可拖动 / 可滚轮 / 可直填，替掉原来只能滑的原生 range */}
+                      <ScrubNumber
+                        value={val}
                         min={min}
                         max={max}
                         step={key === "rotation" ? 0.5 : 1}
-                        value={val}
-                        onChange={(e) => {
+                        onChange={(next) => {
                           let eff = (useAppStore.getState().effects[clip.id] ?? []).find((x) => x.type === type);
                           if (!eff) {
                             useAppStore.getState().addEffect(clip.id, type);
                             eff = (useAppStore.getState().effects[clip.id] ?? []).find((x) => x.type === type);
                           }
-                          if (eff) useAppStore.getState().setEffectParam(eff.id, key, Number(e.target.value));
+                          if (eff) useAppStore.getState().setEffectParam(eff.id, key, next);
                         }}
                       />
-                      <em className="prop-num">{val}</em>
                     </div>
                   );
                 })}

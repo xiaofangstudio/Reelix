@@ -156,6 +156,18 @@ pub fn adapt_sequence_to_asset(
     Ok(project)
 }
 
+/// 双击 `.reelix` 启动时，系统会把工程路径当参数传进来。
+/// 前端启动时问一次：有就调 open_project 打开，没有就正常停在欢迎页。
+///
+/// 不在 setup 里直接读进 AppState，是因为 Tauri 的 `State<'_>` 借用
+/// 活不过 `MutexGuard`（E0597）；走 open_project 还能复用「加载关键帧曲线」那套逻辑。
+#[tauri::command]
+pub fn pending_open_path() -> Option<String> {
+    std::env::args()
+        .skip(1)
+        .find(|a| !a.starts_with('-') && a.to_lowercase().ends_with(".reelix"))
+}
+
 /// 用户主目录（示例工程放 Documents 用）。
 #[tauri::command]
 pub fn home_dir() -> Result<String, String> {

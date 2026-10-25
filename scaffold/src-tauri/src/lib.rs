@@ -35,6 +35,7 @@ use state::AppState;
 
 /// 启动 Tauri：装配全局状态、注册系统对话框插件、挂上全部命令。
 #[cfg(feature = "desktop")]
+
 pub fn run() {
     // —— 无窗口导出模式 —— //
     // MCP / 脚本用这条路径导出成片：
@@ -53,6 +54,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
+            // 双击 .reelix 打开
+            commands::project::pending_open_path,
             // 项目
             commands::project::new_project,
             commands::project::open_project,

@@ -13,6 +13,7 @@ import type { Asset, Clip, Id, Project, Track, TransitionKind } from "../types/p
 import type { ProjectSettings } from "../services/project";
 import { audio, dialog, exportApi, generators, graph, history, media, project as projectApi, render as renderApi, subtitle, timeline } from "../services";
 import { rememberRecentProject } from "../core/recentProjects";
+import { invoke } from "@tauri-apps/api/core";
 
 /** 没起名字时用的默认工程名 */
 const DEFAULT_PROJECT_NAME = "未命名项目";
@@ -91,7 +92,10 @@ function reportFailure(err: unknown, fallback: string): void {
 
 /** 从后端拉一份权威快照回填界面；顺手丢掉已经不存在的选中项。 */
 export async function refreshProject(): Promise<Project | null> {
-  if (!useAppStore.getState().project) return null;
+  // 这里**不能**先判断 store 里有没有 project：从欢迎页打开工程时，
+  // store 还是 null（工程刚在后端加载），上面那样的前置判断会让它直接 return，
+  // 结果 project 永远是 null、欢迎页永远关不掉。后端没有工程时 getProject 自然会失败，
+  // 由下面的 catch 兜住即可。
   try {
     const project = await projectApi.getProject();
     const store = useAppStore.getState();
@@ -137,8 +141,22 @@ function pruneSelection(project: Project): void {
  */
 export async function bootstrapProject(): Promise<void> {
   try {
+    // 双击 .reelix 启动时，系统会把工程路径作为命令行参数传进来。
+    // 必须先把它打开，否则 getProject 拿到的是空 state，界面就停在欢迎页。
+    const pending = await invoke<string | null>("pending_open_path").catch(() => null);
+    if (pending) {
+      await projectApi.openProject(pending);
+    }
     const project = await projectApi.getProject();
-    useAppStore.getState().loadProject(project);
+    const store = useAppStore.getState();
+    store.loadProject(project);
+    // 双击 .reelix 启动时，后端 setup 已经把工程读进 state。
+    // 光 loadProject 不够——startScreen 还是初始的 true，
+    // 编辑器条件是 project && !startScreen，所以必须显式关掉欢迎页。
+    store.hideStartScreen();
+    // 顺手记进「最近使用」，下次在欢迎页能直接点开
+    const path = await projectApi.getProjectPath();
+    if (path) rememberRecentProject(path, project.name);
   } catch {
     useAppStore.getState().clearProject();
   }

@@ -124,6 +124,8 @@ fn parse_easing(s: &str) -> Option<EasingPreset> {
         "ease-in-out" | "easeInOut" | "EaseInOut" => Some(EasingPreset::EaseInOut),
         "bounce" | "Bounce" => Some(EasingPreset::Bounce),
         "elastic" | "Elastic" => Some(EasingPreset::Elastic),
+        // 自定义贝塞尔：配合 outTangentX/Y、inTangentX/Y 四个控制柄
+        "custom" | "Custom" | "bezier" => Some(EasingPreset::Custom),
         _ => None,
     }
 }
@@ -257,7 +259,11 @@ pub fn catalog() -> Vec<Tool> {
                     "param": p_str("参数名"),
                     "timeMs": p_num("时刻，毫秒"),
                     "value": p_num("该时刻的取值"),
-                    "easing": p_str("缓动：linear / ease-in / ease-out / ease-in-out / bounce / elastic，缺省 linear"),
+                    "easing": p_str("缓动：linear / ease-in / ease-out / ease-in-out / bounce / elastic / custom，缺省 linear"),
+                    "outTangentX": p_num("贝塞尔出切线控制柄 x（0~1，easing=custom 时生效）"),
+                    "outTangentY": p_num("贝塞尔出切线控制柄 y（0~1）"),
+                    "inTangentX": p_num("贝塞尔入切线控制柄 x（0~1）"),
+                    "inTangentY": p_num("贝塞尔入切线控制柄 y（0~1）"),
                 }),
                 &["targetId", "param", "timeMs", "value"],
             ),
@@ -627,7 +633,30 @@ fn set_keyframe(session: &mut Session, args: &Value) -> Result<Value, String> {
     let keyframe = session
         .keyframes
         .set_keyframe(&target_id, &param, time_ms, value, easing);
-    serde_json::to_value(&keyframe).map_err(|e| format!("序列化关键帧失败：{e}"))
+    let kid = keyframe.id.clone();
+
+    // 贝塞尔控制柄（可选）。easing=custom 时它们才是真正参与求值的 P1/P2。
+    let tangent = |prefix: &str| -> Option<(f64, f64)> {
+        let x = args.get(&format!("{prefix}X"))?.as_f64()?;
+        let y = args.get(&format!("{prefix}Y"))?.as_f64()?;
+        Some((x, y))
+    };
+    if let Some((x, y)) = tangent("outTangent") {
+        session.keyframes.set_tangent(&kid, false, x, y);
+    }
+    if let Some((x, y)) = tangent("inTangent") {
+        session.keyframes.set_tangent(&kid, true, x, y);
+    }
+
+    // 切线写完要重读，否则返回的还是旧值
+    let stored = session
+        .keyframes
+        .curves()
+        .into_iter()
+        .find(|c| c.target_id == target_id && c.param == param)
+        .and_then(|c| c.keyframes.into_iter().find(|k| k.id == kid))
+        .unwrap_or(keyframe);
+    serde_json::to_value(&stored).map_err(|e| format!("序列化关键帧失败：{e}"))
 }
 
 fn evaluate_param(session: &Session, args: &Value) -> Result<Value, String> {

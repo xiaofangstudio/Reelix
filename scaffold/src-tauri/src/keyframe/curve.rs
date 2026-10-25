@@ -15,6 +15,50 @@ fn easing_tangents(easing: EasingPreset) -> [f64; 4] {
     }
 }
 
+/// 三次贝塞尔求值：给定时间进度 x，返回曲线上的 y（与 CSS `cubic-bezier` 同构）。
+///
+/// 以前 `custom` 缓动走的是固定 [0,0,1,1]，而 `Keyframe.in_tangent/out_tangent`
+/// **存了完全不参与求值** —— 拖控制柄毫无反应，是不折不扣的假功能。
+/// 现在 custom 段用「出切线当 P1、入切线当 P2」真正解一次贝塞尔。
+fn cubic_bezier(x: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+    let x = x.clamp(0.0, 1.0);
+    let bx = |t: f64| {
+        let u = 1.0 - t;
+        3.0 * u * u * t * x1 + 3.0 * u * t * t * x2 + t * t * t
+    };
+    let by = |t: f64| {
+        let u = 1.0 - t;
+        3.0 * u * u * t * y1 + 3.0 * u * t * t * y2 + t * t * t
+    };
+    // 牛顿迭代解 bx(t)=x
+    let mut t = x;
+    for _ in 0..8 {
+        let dx = bx(t) - x;
+        if dx.abs() < 1e-7 {
+            break;
+        }
+        let u = 1.0 - t;
+        let d = 3.0 * u * u * x1 + 6.0 * u * t * (x2 - x1) + 3.0 * t * t * (1.0 - x2);
+        if d.abs() < 1e-9 {
+            break;
+        }
+        t = (t - dx / d).clamp(0.0, 1.0);
+    }
+    // 收敛不了就二分兜底
+    if (bx(t) - x).abs() > 1e-3 {
+        let (mut lo, mut hi) = (0.0, 1.0);
+        for _ in 0..24 {
+            t = (lo + hi) * 0.5;
+            if bx(t) < x {
+                lo = t;
+            } else {
+                hi = t;
+            }
+        }
+    }
+    by(t)
+}
+
 /// 求某时刻的参数值。`keyframes` 必须按 time_ms 升序。
 /// 没有关键帧返回 None；只有一帧返回该值；两端之外保持端点值，不外推。
 pub fn evaluate_curve(keyframes: &[Keyframe], time_ms: f64) -> Option<f64> {
@@ -45,7 +89,11 @@ pub fn evaluate_curve(keyframes: &[Keyframe], time_ms: f64) -> Option<f64> {
     }
 
     let t = (time_ms - a.time_ms) / span;
-    let eased = apply_easing(t, a.easing);
+    let eased = if a.easing == EasingPreset::Custom {
+        cubic_bezier(t, a.out_tangent.x, a.out_tangent.y, b.in_tangent.x, b.in_tangent.y)
+    } else {
+        apply_easing(t, a.easing)
+    };
     Some(a.value + (b.value - a.value) * eased)
 }
 
@@ -384,5 +432,47 @@ mod tests {
             1.0,
         );
         assert_eq!(out.len(), 2, "容差之外应当新增一帧");
+    }
+}
+
+#[cfg(test)]
+mod bezier_tests {
+    use super::*;
+    use crate::keyframe::model::{EasingPreset, Keyframe, Tangent};
+
+    fn mk(t: f64, v: f64, easing: EasingPreset, out_y: f64, in_y: f64) -> Keyframe {
+        Keyframe {
+            id: format!("k{t}"),
+            target_id: "n".into(),
+            param: "p".into(),
+            time_ms: t,
+            value: v,
+            easing,
+            in_tangent: Tangent::new(0.5, in_y),
+            out_tangent: Tangent::new(0.5, out_y),
+        }
+    }
+
+    /// 自定义贝塞尔必须真的改变插值，否则切线就是存着看的假功能。
+    #[test]
+    fn custom_bezier_midpoint_differs_from_linear() {
+        let lin = vec![
+            mk(0.0, 0.0, EasingPreset::Linear, 0.0, 0.0),
+            mk(1000.0, 100.0, EasingPreset::Linear, 0.0, 0.0),
+        ];
+        let mid_lin = evaluate_curve(&lin, 500.0).unwrap();
+        assert!((mid_lin - 50.0).abs() < 0.5, "线性中点应当接近 50");
+
+        // 两个控制柄都往上拉（y=0.9）→ 曲线整体拱起 → 中点明显高于 50。
+        // 注意不能一上一下：那样是 S 形对称曲线，中点正好还是 50，测不出来。
+        let cus = vec![
+            mk(0.0, 0.0, EasingPreset::Custom, 0.9, 0.9),
+            mk(1000.0, 100.0, EasingPreset::Custom, 0.9, 0.9),
+        ];
+        let mid_cus = evaluate_curve(&cus, 500.0).unwrap();
+        assert!(
+            mid_cus > mid_lin + 10.0,
+            "自定义贝塞尔中点应当明显高于线性，实际 {mid_cus}"
+        );
     }
 }

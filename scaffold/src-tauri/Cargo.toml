@@ -1,6 +1,6 @@
 [package]
 name = "reelix"
-version = "1.0.1"
+version = "1.0.7"
 description = "特效合成软件（合成优先，剪辑内建）"
 authors = ["小方工作室"]
 license = "MIT"
