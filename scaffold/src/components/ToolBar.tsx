@@ -133,7 +133,7 @@ export function ToolBar() {
         <button
           type="button"
           className={`tool-btn${popover === "text" ? " active" : ""}`}
-          title="文字预设（给选中片段挂文字，可再在效果控件调）"
+          title="文字预设（在播放头处加一条字幕，独占字幕轨）"
           onClick={() => setPopover(popover === "text" ? null : "text")}
         >
           <span className="tool-icon">
@@ -143,11 +143,7 @@ export function ToolBar() {
         {popover === "text" && (
           <div className="tool-popover" onPointerDown={(e) => e.stopPropagation()}>
             <div className="tool-popover-head">文字预设</div>
-            <TextTab
-              keyword=""
-              selectedCount={selectedCount}
-              onApply={useAppStore.getState().addEffect}
-            />
+            <TextTab keyword="" />
           </div>
         )}
       </div>

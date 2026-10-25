@@ -144,6 +144,8 @@ export const EC_MENUS: FullMenuNode[] = [
     { label: "全选", id: "edit.selectAll" },
     { label: "取消全选", id: "edit.deselectAll" },
     { sep: true },
+    { label: "偏好设置…", id: "app.settings", shortcut: "Ctrl+," },
+    { sep: true },
     { label: "标签", children: [
       { label: "选择标签组", id: "edit.selectLabelGroup" },
       { sep: true },
@@ -873,6 +875,8 @@ export const FC_MENUS: FullMenuNode[] = [
     { label: "全选", id: "edit.selectAll", shortcut: "Cmd+A" },
     { label: "取消全选", id: "edit.deselectAll", shortcut: "Cmd+Shift+A" },
     { label: "重复", id: "edit.duplicate", shortcut: "Cmd+Shift+/" },
+    { sep: true },
+    { label: "偏好设置…", id: "app.settings", shortcut: "Ctrl+," },
   ] },
   { label: "片段", children: [
     { label: "重命名…", id: "clip.rename" },

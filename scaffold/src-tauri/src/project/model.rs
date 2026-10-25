@@ -92,6 +92,12 @@ pub struct Project {
     /// 素材箱文件夹；旧工程没有这个字段也能加载（serde default）
     #[serde(default)]
     pub bins: Vec<Bin>,
+    /// 关键帧曲线（出场动画、摄像机环绕等所有参数动画）。
+    ///
+    /// 之前关键帧只活在内存和撤销栈里，一保存就丢——用户做好的动画关掉工程再打开
+    /// 全没了。现在随工程一起落盘，旧工程没有这个字段也照样能读（空曲线）。
+    #[serde(default)]
+    pub curves: Vec<crate::keyframe::model::Curve>,
 }
 
 #[cfg(test)]

@@ -256,7 +256,7 @@ function ColorShare({ frameUrl }: { frameUrl: string | null }) {
   );
 }
 
-export function ColorGradePanel(): React.ReactElement {
+export function ColorGradeControls(): React.ReactElement {
   const selectedClipId = useAppStore((s) => s.selectedClipIds[0] ?? null);
   const tracks = useAppStore((s) => s.project?.sequences[0]?.tracks);
   const allClips = useAppStore((s) => s.project?.sequences[0]?.tracks.flatMap((t) => t.clips));
@@ -265,8 +265,7 @@ export function ColorGradePanel(): React.ReactElement {
   const setEffectParam = useAppStore((s) => s.setEffectParam);
   const frameUrl = useAppStore((s) => s.monitorFrameUrl ?? null);
 
-  const clip = allClips?.find((c) => c.id === selectedClipId) ?? null;
-  const visual = isVisualClip(clip, tracks);
+  void tracks; void allClips; void isVisualClip;
   const clipEffects = selectedClipId ? effects[selectedClipId] ?? [] : [];
   const findEffect = (type: string) => clipEffects.find((e) => e.type === type);
   /** lazy 取（或建）一个调色效果节点，返回它的参数表 */
@@ -289,22 +288,10 @@ export function ColorGradePanel(): React.ReactElement {
     if (e) setEffectParam(e.id, key, v);
   };
 
-  if (!visual) {
-    return (
-      <div className="color-panel">
-        <div className="color-panel-empty">
-          {clip
-            ? "选中的是音频或摄像机片段——它们不出现在画面上，不能调色。选中视频、图片或文字片段再回来。"
-            : "先在时间轴上选中一个会出现在画面里的片段（视频 / 图片 / 文字），调色面板才会生效。"}
-        </div>
-      </div>
-    );
-  }
-
   // 监视器帧 URL：从 store 拿不到就降级为无示波器（示波器组件自己处理 null）
   return (
-    <div className="color-panel">
-      <div className="color-panel-left">
+    <div className="color-controls">
+      <div className="color-controls-main">
         <div className="color-row">
           <ColorWheel
             label="阴影"
@@ -385,7 +372,7 @@ export function ColorGradePanel(): React.ReactElement {
           ))}
         </div>
       </div>
-      <div className="color-panel-right">
+      <div className="color-controls-scope">
         <RgbScope frameUrl={frameUrl} />
         <ColorShare frameUrl={frameUrl} />
       </div>

@@ -109,7 +109,7 @@ async function clearAllMarkers(): Promise<void> {
 /** 缩放（菜单与时间线共用 zoomLevel） */
 function zoomBy(factor: number): void {
   const s = useAppStore.getState();
-  s.setZoomLevel(Math.min(8, Math.max(0.005, s.zoomLevel * factor)));
+  s.setZoomLevel(Math.min(0.67, Math.max(0.002, s.zoomLevel * factor)));
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +155,12 @@ const ACTIONS: Record<string, Action> = {
   "file.newAdjustmentLayer": { run: () => void createGeneratorAsset("white", 3), enabled: hasProject },
   "file.quit": { run: () => window.close() },
   "app.quit": { run: () => window.close() },
+  // 偏好设置：模态面板（主题 / 预览性能 / 自动保存 / 缓存）
+  "app.settings": { run: () => useAppStore.getState().setSettingsOpen(true) },
+  // 内置教程：完全离线，不依赖已经不通的官网
+  "help.inAppTutorials": { run: () => useAppStore.getState().setTutorialOpen(true) },
+  // 「在线教程」以前是个死外链（域名不可达）；统一回落到内置教程，保证点了有反应
+  "help.onlineTutorials": { run: () => useAppStore.getState().setTutorialOpen(true) },
 
   // ---------- 编辑 ----------
   "edit.undo": { run: () => void undo() },

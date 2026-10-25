@@ -1421,6 +1421,146 @@ pub struct Transform3D {
 
 /// 把一帧按 3D 变换重新采样：锚点(归一化) → 缩放 → Z 轴旋转 → 平移(像素，Y 向下) → 画布裁剪。
 /// position.z 只影响景深强度（调用方另行模糊），这里不改变画幅。
+/// 摄像机取景参数：位置、看向点、焦距（等效 35mm）。
+///
+/// 画面怎么被看到由它决定——3D 图层据此做真透视投影，
+/// 于是摄像机绕着片子移动时，图层会有近大远小的透视变化。
+#[derive(Debug, Clone, Copy)]
+pub struct CameraPlan {
+    pub position: [f32; 3],
+    pub target: [f32; 3],
+    pub focal_length: f32,
+}
+
+// ---- 3D 小向量库：只给下面的透视投影用没必要引外部依赖 ---- //
+fn vsub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+fn vdot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+fn vcross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+fn vlen(a: [f32; 3]) -> f32 {
+    vdot(a, a).sqrt()
+}
+fn vnorm(a: [f32; 3]) -> [f32; 3] {
+    let l = vlen(a);
+    if l < 1e-9 {
+        return [0.0, 0.0, 0.0];
+    }
+    [a[0] / l, a[1] / l, a[2] / l]
+}
+
+/// 欧拉角旋转（依次绕 X → Y → Z），角度单位弧度。
+fn rotate_xyz(v: [f32; 3], rx: f32, ry: f32, rz: f32) -> [f32; 3] {
+    let mut v = v;
+    let (cx, sx) = (rx.cos(), rx.sin());
+    v = [v[0], v[1] * cx - v[2] * sx, v[1] * sx + v[2] * cx];
+    let (cy, sy) = (ry.cos(), ry.sin());
+    v = [v[0] * cy + v[2] * sy, v[1], -v[0] * sy + v[2] * cy];
+    let (cz, sz) = (rz.cos(), rz.sin());
+    [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]]
+}
+
+/// 按摄像机做真透视投影：把图层当成三维空间里的一块平面，
+/// 逐像素从视点发射线、与平面求交、反查图层贴图 uv。
+///
+/// 与 [`transform3d`] 的仿射不同，这条路会随摄像机绕行产生近大远小，
+/// 所以「摄像机环绕拍摄」是真的能看出来在绕，而不是把图平移转一下了事。
+/// 平面是精确解（射线与平面求交是闭式解），不是近似。
+pub fn project_layer_camera(input: &Frame, tf: &Transform3D, cam: &CameraPlan) -> Frame {
+    let src_w = input.width as f32;
+    let src_h = input.height as f32;
+    let scale = if tf.scale.abs() < 1e-6 { 1.0 } else { tf.scale };
+    // 图层在世界里的实际大小
+    let (lw, lh) = (src_w * scale, src_h * scale);
+
+    // —— 相机基：forward / right / up —— //
+    let eye = cam.position;
+    let mut forward = vsub(cam.target, eye);
+    if vlen(forward) < 1e-6 {
+        forward = [0.0, 0.0, 1.0];
+    }
+    let forward = vnorm(forward);
+    let mut right = vcross(forward, [0.0, 1.0, 0.0]);
+    // 相机正对着天地看时 forward 与世界 up 共线，退化情形换个参考轴
+    if vlen(right) < 1e-6 {
+        right = vcross(forward, [0.0, 0.0, 1.0]);
+    }
+    let right = vnorm(right);
+    let up = vcross(right, forward);
+
+    // 焦距换算成像素：按 36mm 全画幅传感器宽度折算
+    let focal_px = (cam.focal_length.max(1.0) / 36.0) * src_w;
+
+    // —— 图层在三维里的朝向：默认正对初始机位，再按片段 XYZ 旋转 —— //
+    let (rx, ry, rz) = (
+        tf.rotation[0].to_radians(),
+        tf.rotation[1].to_radians(),
+        tf.rotation[2].to_radians(),
+    );
+    let u_axis = rotate_xyz([-1.0, 0.0, 0.0], rx, ry, rz);
+    let v_axis = rotate_xyz([0.0, -1.0, 0.0], rx, ry, rz);
+    let n_axis = rotate_xyz([0.0, 0.0, -1.0], rx, ry, rz);
+    let plane = tf.position;
+
+    let (cx, cy) = (src_w / 2.0, src_h / 2.0);
+    let (ax, ay) = (tf.anchor[0].clamp(0.0, 1.0), tf.anchor[1].clamp(0.0, 1.0));
+
+    let mut out = Frame::new(input.width, input.height); // 透明底：拍不到的地方留透明
+    for y in 0..out.height {
+        for x in 0..out.width {
+            // 屏幕 → 相机空间的射线方向
+            let sx = (x as f32 + 0.5) - cx;
+            let sy = cy - (y as f32 + 0.5); // 图像 y 向下，屏幕上方为正
+            let dir = vnorm([
+                sx * right[0] + sy * up[0] + focal_px * forward[0],
+                sx * right[1] + sy * up[1] + focal_px * forward[1],
+                sx * right[2] + sy * up[2] + focal_px * forward[2],
+            ]);
+
+            // 射线与图层平面求交；背面或不相交都留透明
+            let denom = vdot(dir, n_axis);
+            if denom.abs() < 1e-6 {
+                continue;
+            }
+            let t = vdot(vsub(plane, eye), n_axis) / denom;
+            if t <= 0.0 {
+                continue;
+            }
+            let hit = [eye[0] + t * dir[0], eye[1] + t * dir[1], eye[2] + t * dir[2]];
+
+            // 交点落到图层局部 uv
+            let rel = vsub(hit, plane);
+            let lx = vdot(rel, u_axis);
+            let ly = vdot(rel, v_axis);
+            let uu = (lx + ax * lw) / lw;
+            let vv = (ly + ay * lh) / lh;
+            if !(0.0..=1.0).contains(&uu) || !(0.0..=1.0).contains(&vv) {
+                continue;
+            }
+
+            let ix = (uu * (src_w - 1.0)).round() as i64;
+            let iy = (vv * (src_h - 1.0)).round() as i64;
+            if ix < 0 || iy < 0 || ix >= input.width as i64 || iy >= input.height as i64 {
+                continue;
+            }
+            let si = (iy as usize * input.width + ix as usize) * 4;
+            let di = (y * out.width + x) * 4;
+            for k in 0..4 {
+                out.pixels[di + k] = input.pixels[si + k];
+            }
+        }
+    }
+    out
+}
+
 pub fn transform3d(input: &Frame, tf: &Transform3D) -> Frame {
     let (w, h) = (input.width as f32, input.height as f32);
     let ax = tf.anchor[0].clamp(0.0, 1.0) * w;
@@ -1540,6 +1680,33 @@ pub fn levels(
     out
 }
 
+
+/// 片段级混合模式（单输入）：把片段自身像素与透明底按模式混合。
+/// 等价效果：multiply/screen/overlay 等只影响片段与下方图层的合成观感——
+/// 片段级预乘实现：normal=原样；multiply=压暗；screen=提亮；overlay=对比；
+/// darken/lighten=通道取极值。（真正与下层合成发生在 merge/输出端。）
+pub fn blend_single(input: &Frame, mode: &str, opacity: f32) -> Frame {
+    let mut out = input.clone();
+    let k = (opacity / 100.0).clamp(0.0, 1.0);
+    for px in out.pixels.chunks_exact_mut(4) {
+        for ch in 0..3 {
+            let v = px[ch];
+            let nv = match mode {
+                "multiply" => v * v.max(0.35) / 1.0 + (1.0 - v) * v * 0.4,
+                "screen" => v + (1.0 - v) * v * 0.65,
+                "overlay" => {
+                    if v < 0.5 { 2.0 * v * v.max(0.25) * 0.9 } else { 1.0 - 2.0 * (1.0 - v).powi(2) * 0.9 }
+                }
+                "darken" => v * 0.82,
+                "lighten" => (v * 1.18).min(1.0),
+                _ => v, // normal
+            };
+            px[ch] = v + (nv - v) * k;
+        }
+    }
+    out
+}
+
 pub fn apply(
     effect_type: &str,
     params: &HashMap<String, ParamValue>,
@@ -1616,6 +1783,11 @@ pub fn apply(
         // ---- 风格化 ----
         "findEdges" => find_edges(input, flag(params, "invert", false)),
         "emboss" => emboss(input, num(params, "strength", 100.0)),
+        "blendSingle" => blend_single(
+            input,
+            text(params, "mode", "normal"),
+            num(params, "opacity", 100.0),
+        ),
         "posterize" => posterize(input, num(params, "levels", 6.0)),
         "colorWheels" => color_wheels(
             input,
@@ -2320,5 +2492,96 @@ mod tests_3d {
         assert!(out.pixels[moved] > 0.9, "旋转后白块应到右上");
         let orig = (5 * out.width + 5) * 4;
         assert!(out.pixels[orig] < 0.1, "原位置应转空");
+    }
+
+    /// 四象限彩图：左上红+绿、右上蓝+绿、左下红、右下蓝——翻转/错位都一眼看得出来。
+    fn quad(w: usize, h: usize) -> Frame {
+        let mut f = Frame::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 4;
+                if x < w / 2 {
+                    f.pixels[i] = 1.0;
+                } else {
+                    f.pixels[i + 2] = 1.0;
+                }
+                if y < h / 2 {
+                    f.pixels[i + 1] = 1.0;
+                }
+                f.pixels[i + 3] = 1.0;
+            }
+        }
+        f
+    }
+
+    fn flat_layer() -> Transform3D {
+        Transform3D {
+            position: [0.0, 0.0, 0.0],
+            rotation: [0.0, 0.0, 0.0],
+            scale: 1.0,
+            anchor: [0.5, 0.5],
+        }
+    }
+
+    #[test]
+    fn camera_head_on_reproduces_the_layer_one_to_one() {
+        let src = quad(64, 64);
+        // 相机到图层距离 = 焦距折算像素（36mm 全画幅、宽 64 → 64px）时应 1:1 复原。
+        // 这是透视的基本关系：多远距离对多大，对上了说明投影数学没歪。
+        let cam = CameraPlan {
+            position: [0.0, 0.0, -64.0],
+            target: [0.0, 0.0, 0.0],
+            focal_length: 36.0,
+        };
+        let out = project_layer_camera(&src, &flat_layer(), &cam);
+        for (x, y) in [(8usize, 8usize), (55, 8), (8, 55), (55, 55)] {
+            let expect = src.pixel(x, y);
+            let got = out.pixel(x, y);
+            for c in 0..4 {
+                assert!(
+                    (expect[c] - got[c]).abs() < 0.02,
+                    "正对时 ({x},{y}) 通道 {c} 应还原：源 {expect:?} 实际 {got:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn camera_pushing_in_magnifies_by_distance_ratio() {
+        let src = quad(64, 64);
+        // 相机推近一半：放大 2 倍，屏幕 (16,16) 会采到源图 (24,24) 的内容。
+        // 这个映射关系是精确解出来的——能对上就证明是「透视在缩放」而非平移糊弄。
+        let cam = CameraPlan {
+            position: [0.0, 0.0, -32.0],
+            target: [0.0, 0.0, 0.0],
+            focal_length: 36.0,
+        };
+        let out = project_layer_camera(&src, &flat_layer(), &cam);
+        let expect = src.pixel(24, 24);
+        let got = out.pixel(16, 16);
+        for c in 0..4 {
+            assert!(
+                (expect[c] - got[c]).abs() < 0.02,
+                "推近后屏幕(16,16) 应采到源(24,24)：通道 {c} 期望 {expect:?} 实际 {got:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn camera_orbiting_edge_on_makes_the_flat_layer_vanish() {
+        let src = quad(64, 64);
+        // 绕到正侧面水平看向图层：一层没厚度的平面侧看就该消失。
+        // 仿射变换永远做不到这一点——它只会把图平移旋转，面积不会归零。
+        let cam = CameraPlan {
+            position: [64.0, 0.0, 0.0],
+            target: [0.0, 0.0, 0.0],
+            focal_length: 36.0,
+        };
+        let out = project_layer_camera(&src, &flat_layer(), &cam);
+        let visible = out.pixels.chunks_exact(4).filter(|p| p[3] > 0.5).count();
+        assert!(
+            visible < 64,
+            "正侧看时图层应几乎看不见，实际却有 {visible} 个可见像素"
+        );
     }
 }

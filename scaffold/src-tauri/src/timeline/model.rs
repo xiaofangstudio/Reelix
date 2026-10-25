@@ -85,6 +85,17 @@ impl Default for Transform3D {
     }
 }
 
+/// 曲线变速关键点：片段内时刻 → 速度（剪映式折线，两点之间线性插值）。
+///
+/// `t_ms` 相对片段起点（0 = 片段头），`speed` 为该点的倍速；
+/// 曲线两个端点之外保持端点值，不外推。空曲线 = 恒定 `Clip.speed`。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeedKey {
+    pub t_ms: f64,
+    pub speed: f64,
+}
+
 /// 衔接处转场：右片段（incoming）头部与左片段（outgoing）尾部的重叠画法。
 ///
 /// `kind` 取 `"crossDissolve"`（叠化）或 `"dipToBlack"`（黑场过渡）；
@@ -113,6 +124,12 @@ pub struct Clip {
     pub out_ms: f64,
     pub speed: f64,
     pub reversed: bool,
+    /// 曲线变速关键点（片段内时刻 → 速度）；None/空 = 恒定 `speed`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_curve: Option<Vec<SpeedKey>>,
+    /// 声音变调（剪映同款开关）：true = 变速时音随速变；false = 保调（默认）
+    #[serde(default)]
+    pub audio_pitch_shift: bool,
     /// 对应的图节点；剪辑与特效融合的接口
     pub node_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -135,6 +152,9 @@ pub struct Clip {
     /// 头部衔接转场；与左片段的重叠窗口内做画面混合（合成器里生效）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition_in: Option<Transition>,
+    /// 尾部淡出：片段末尾向黑/白渐隐（剪映的「淡出」挂在这里，不是效果栈）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition_out: Option<Transition>,
     /// 音频慢入时长（毫秒）；区间内音量从 0 线性升到满，混音时生效
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_fade_in_ms: Option<f64>,
@@ -156,6 +176,13 @@ fn default_true() -> bool {
     true
 }
 
+/// 新序列的默认时长（毫秒）。
+///
+/// 空工程也给足可用的标尺与播放空间：时长 0 会把播放头夹死在 0、
+/// 标尺没有刻度、监视器停在第一帧——用户原话「压根没有办法剪」。
+/// 有片段时以最靠后的片段出点为准（见 `recompute_sequence_duration`）。
+pub const DEFAULT_SEQUENCE_MS: f64 = 60_000.0;
+
 impl Clip {
     /// 片段的结束时刻。
     pub fn end_ms(&self) -> f64 {
@@ -166,6 +193,140 @@ impl Clip {
     pub fn covers(&self, time_ms: f64) -> bool {
         time_ms >= self.start_ms && time_ms < self.end_ms()
     }
+
+    /// 是否挂了曲线变速（至少两个点才算）。
+    pub fn has_speed_curve(&self) -> bool {
+        self.speed_curve
+            .as_ref()
+            .is_some_and(|k| k.len() >= 2)
+    }
+
+    /// 生效速度（防 0 / 负）：曲线求值或恒定 speed。
+    pub fn base_speed(&self) -> f64 {
+        let s = self.speed;
+        if s.is_finite() && s.abs() > f64::EPSILON {
+            s
+        } else {
+            1.0
+        }
+    }
+
+    /// 片段内 `local_ms` 处的瞬时速度（曲线折线插值；无曲线取 base_speed）。
+    pub fn speed_at(&self, local_ms: f64) -> f64 {
+        let Some(keys) = self.speed_curve.as_ref() else {
+            return self.base_speed();
+        };
+        if keys.is_empty() {
+            return self.base_speed();
+        }
+        // 端头之外保持端点值，不外推
+        if local_ms <= keys[0].t_ms {
+            return sanitize_speed(keys[0].speed);
+        }
+        let last = keys[keys.len() - 1];
+        if local_ms >= last.t_ms {
+            return sanitize_speed(last.speed);
+        }
+        for pair in keys.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            if local_ms >= a.t_ms && local_ms <= b.t_ms {
+                let span = b.t_ms - a.t_ms;
+                if span <= f64::EPSILON {
+                    return sanitize_speed(b.speed);
+                }
+                let t = (local_ms - a.t_ms) / span;
+                return sanitize_speed(a.speed + (b.speed - a.speed) * t);
+            }
+        }
+        self.base_speed()
+    }
+
+    /// 片段内 `[0, local_ms]` 在素材里走过的毫秒数（曲线下是速度的积分）。
+    ///
+    /// 折线速度的积分是分段二次函数，这里按段精确累加，不做数值近似。
+    pub fn source_offset(&self, local_ms: f64) -> f64 {
+        let local = local_ms.max(0.0);
+        let Some(keys) = self.speed_curve.as_ref() else {
+            return local * self.base_speed();
+        };
+        if keys.len() < 2 {
+            return local * self.base_speed();
+        }
+        let mut acc = 0.0;
+        for pair in keys.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let sa = sanitize_speed(a.speed);
+            let sb = sanitize_speed(b.speed);
+            let span = (b.t_ms - a.t_ms).max(0.0);
+            if span <= f64::EPSILON {
+                continue;
+            }
+            // 本段里走过的片段内时长（线性速度 → 梯形面积）
+            let walked = (local - a.t_ms).clamp(0.0, span);
+            let t = walked / span;
+            acc += span * t * (sa + (sb - sa) * t * 0.5);
+        }
+        acc
+    }
+
+    /// 曲线下的平均速度（给 EDL / 估算用）：总源长 ÷ 总时长。
+    pub fn average_speed(&self) -> f64 {
+        if !self.has_speed_curve() {
+            return self.base_speed();
+        }
+        let total = self.source_offset(self.duration_ms);
+        if self.duration_ms <= f64::EPSILON {
+            return self.base_speed();
+        }
+        sanitize_speed(total / self.duration_ms)
+    }
+
+    /// `source_offset` 的逆函数：走完 `src_ms` 毫秒素材需要多少片段内时长。
+    ///
+    /// 按段累加，段内解一元二次方程；曲线退化成直线时就是除法和一致。
+    pub fn local_for_source(&self, src_ms: f64) -> f64 {
+        let target = src_ms.max(0.0);
+        let Some(keys) = self.speed_curve.as_ref() else {
+            return target / self.base_speed();
+        };
+        if keys.len() < 2 {
+            return target / self.base_speed();
+        }
+        let mut remaining = target;
+        for pair in keys.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let sa = sanitize_speed(a.speed);
+            let sb = sanitize_speed(b.speed);
+            let span = (b.t_ms - a.t_ms).max(0.0);
+            if span <= f64::EPSILON {
+                continue;
+            }
+            let seg_total = span * 0.5 * (sa + sb);
+            if remaining <= seg_total || pair[1].t_ms >= keys[keys.len() - 1].t_ms {
+                // 段内解 span*t*(sa+(sb-sa)*t/2) = remaining
+                let slope = (sb - sa) * 0.5;
+                let t = if slope.abs() < 1e-12 {
+                    (remaining / (span * sa)).clamp(0.0, 1.0)
+                } else {
+                    // slope*span*t² + sa*span*t - remaining = 0
+                    let c = span * sa;
+                    let disc = (c * c + 4.0 * slope * span * remaining).max(0.0);
+                    ((-c + disc.sqrt()) / (2.0 * slope * span)).clamp(0.0, 1.0)
+                };
+                return a.t_ms + span * t;
+            }
+            remaining -= seg_total;
+        }
+        self.duration_ms
+    }
+}
+
+/// 把速度夹到安全范围：必须有限、为正，落在 0.01 ~ 100 之间。
+fn sanitize_speed(speed: f64) -> f64 {
+    if !speed.is_finite() || speed <= 0.0 {
+        return 1.0;
+    }
+    speed.clamp(0.01, 100.0)
 }
 
 /// 一条轨道。
@@ -211,6 +372,8 @@ mod tests {
             out_ms: duration_ms,
             speed: 1.0,
             reversed: false,
+            speed_curve: None,
+            audio_pitch_shift: false,
             node_id: "n1".into(),
             compound_id: None,
             enable_3d: false,
@@ -219,6 +382,7 @@ mod tests {
             enabled: true,
             label: None,
             transition_in: None,
+            transition_out: None,
             audio_highpass_hz: None,
             audio_lowpass_hz: None,
             audio_delay_ms: None,
@@ -380,5 +544,77 @@ mod tests {
         assert!(back.audio_fade_in_ms.is_none(), "缺 audioFadeInMs 应回落 None");
         assert!(back.audio_fade_out_ms.is_none(), "缺 audioFadeOutMs 应回落 None");
         assert!(back.enabled, "缺 enabled 应回落为 true");
+        assert!(back.speed_curve.is_none(), "缺 speedCurve 应回落 None");
+        assert!(!back.audio_pitch_shift, "缺 audioPitchShift 应回落 false（保调）");
+    }
+
+    /// 无曲线时：速度恒定、源偏移就是线性乘积（老行为不变）。
+    #[test]
+    fn constant_speed_math_is_linear() {
+        let mut c = clip(0.0, 2000.0);
+        c.speed = 2.0;
+        c.out_ms = 4000.0;
+        assert!(c.speed_at(0.0) - 2.0 < 1e-9 && c.speed_at(2000.0) - 2.0 < 1e-9);
+        assert!((c.source_offset(1000.0) - 2000.0).abs() < 1e-9, "1 秒片段应走 2 秒素材");
+        assert!((c.local_for_source(2000.0) - 1000.0).abs() < 1e-9, "逆运算要能回去");
+        assert!((c.average_speed() - 2.0).abs() < 1e-9);
+    }
+
+    /// 曲线变速：折线求值 + 积分 + 逆运算三者必须自洽。
+    #[test]
+    fn speed_curve_integrates_and_inverts() {
+        let mut c = clip(0.0, 4000.0);
+        // 0ms:1× → 2000ms:3× → 4000ms:1×（先加速再减速的「子弹时间」形）
+        c.speed_curve = Some(vec![
+            SpeedKey { t_ms: 0.0, speed: 1.0 },
+            SpeedKey { t_ms: 2000.0, speed: 3.0 },
+            SpeedKey { t_ms: 4000.0, speed: 1.0 },
+        ]);
+        c.out_ms = 8000.0; // 源总长 = 梯形积分 8000ms，与曲线自洽
+
+        // 折线中点：1 与 3 之间 → 2
+        assert!((c.speed_at(1000.0) - 2.0).abs() < 1e-9, "段中点应取两端均值");
+        // 端头之外不外推
+        assert!((c.speed_at(-500.0) - 1.0).abs() < 1e-9);
+        assert!((c.speed_at(99999.0) - 1.0).abs() < 1e-9);
+
+        // 积分：前 2 秒走 (1+3)/2×2000 = 4000ms；全程 = 4000 + 4000 = 8000ms
+        assert!((c.source_offset(2000.0) - 4000.0).abs() < 1e-6, "前段梯形面积 4000");
+        assert!((c.source_offset(4000.0) - 8000.0).abs() < 1e-6, "全程 8000");
+        assert!((c.source_offset(1000.0) - 1500.0).abs() < 1e-6, "第一秒梯形 1500");
+
+        // 逆运算：走 4000ms 素材应对应 2000ms 片段内时刻
+        assert!((c.local_for_source(4000.0) - 2000.0).abs() < 1e-6, "逆运算要回到 2000");
+        assert!((c.local_for_source(8000.0) - 4000.0).abs() < 1e-6, "全程逆运算");
+
+        // 平均速度 = 8000/4000 = 2
+        assert!((c.average_speed() - 2.0).abs() < 1e-9, "均速应是总源长除总时长");
+    }
+
+    /// 速度非法（0 / 负 / NaN）时夹到 1，不让积分炸掉。
+    #[test]
+    fn speed_curve_sanitizes_bad_values() {
+        let mut c = clip(0.0, 1000.0);
+        c.speed = 0.0;
+        assert!((c.base_speed() - 1.0).abs() < 1e-9, "0 速夹成 1");
+        c.speed_curve = Some(vec![
+            SpeedKey { t_ms: 0.0, speed: -2.0 },
+            SpeedKey { t_ms: 1000.0, speed: f64::NAN },
+        ]);
+        assert!((c.speed_at(500.0) - 1.0).abs() < 1e-9, "负/NaN 都夹成 1");
+        assert!((c.source_offset(1000.0) - 1000.0).abs() < 1e-9, "夹成 1 后积分即时长");
+    }
+
+    /// speedCurve / audioPitchShift 的 camelCase 契约。
+    #[test]
+    fn speed_curve_serializes_camel_case() {
+        let mut c = clip(0.0, 1000.0);
+        c.speed_curve = Some(vec![SpeedKey { t_ms: 0.0, speed: 1.0 }, SpeedKey { t_ms: 1000.0, speed: 2.0 }]);
+        c.audio_pitch_shift = true;
+        let v: Value = serde_json::to_value(&c).unwrap();
+        let curve = v.get("speedCurve").expect("应写 speedCurve");
+        assert_eq!(curve[0].get("tMs").and_then(Value::as_f64), Some(0.0));
+        assert_eq!(curve[0].get("speed").and_then(Value::as_f64), Some(1.0));
+        assert_eq!(v.get("audioPitchShift").and_then(Value::as_bool), Some(true));
     }
 }

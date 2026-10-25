@@ -7,7 +7,7 @@
  * 按规矩，这里只调 store/projectActions，不直接碰 Tauri IPC；失败提示由动作层兜。
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAppStore } from "../store/appStore";
 import { newProject, openProject, openProjectAt } from "../store/projectActions";
 import { loadRecentProjects } from "../core/recentProjects";
@@ -54,6 +54,30 @@ export function StartScreen() {
   const [frameRate, setFrameRate] = useState(25);
   const [colorSpace, setColorSpace] = useState("Rec.709");
   const [busy, setBusy] = useState(false);
+
+  // 画幅与帧率的初始值取自偏好设置（「新建工程默认」组）：
+  // 配过就带上，没配过退回 1080p / 25fps；取值不在预设档里就落到「自定义」。
+  useEffect(() => {
+    void (async () => {
+      try {
+        const { getSettings } = await import("../services/settings");
+        const s = await getSettings();
+        const w = Number(s.defaultWidth);
+        const h = Number(s.defaultHeight);
+        const fps = Number(s.defaultFrameRate);
+        if (Number.isFinite(w) && w > 0 && Number.isFinite(h) && h > 0) {
+          setCustomWidth(w);
+          setCustomHeight(h);
+          setPreset(
+            RESOLUTIONS.some((r) => r.width === w && r.height === h) ? presetKey(w, h) : CUSTOM
+          );
+        }
+        if (Number.isFinite(fps) && fps > 0) setFrameRate(fps);
+      } catch {
+        /* 读不到设置就保持内置默认值 */
+      }
+    })();
+  }, []);
 
   const recent = loadRecentProjects();
 
@@ -250,17 +274,43 @@ export function StartScreen() {
               title="打开内置示例工程：一条 30 秒的片子，用到了文字/字幕/音频/转场/关键帧/效果栈"
               onClick={() => void openSampleProject()}
             >
-              📚 示例项目「30 秒认识 Reelix」
+              <svg className="start-learn-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <path
+                  d="M2.5 3.2h3.4l1.1 1.3h6.5v8.3H2.5z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinejoin="round"
+                />
+                <path d="M6 8.2h5M6 10.4h3.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              </svg>
+              示例项目「30 秒认识 Reelix」
             </button>
-            <a className="start-learn-link" href="https://reelix.xiaofang.studio/docs" target="_blank" rel="noreferrer">
+            {/* 这些都是内置面板，不联网也能开。
+                以前这里是三个外链 <a target="_blank">，指向一个根本不通的域名，
+                Tauri 的 WebView 又不会开系统浏览器——点了完全没反应。 */}
+            <button
+              type="button"
+              className="start-learn-link"
+              onClick={() => useAppStore.getState().setTutorialOpen(true)}
+            >
               入门教程
-            </a>
-            <a className="start-learn-link" href="https://reelix.xiaofang.studio/docs/shortcuts" target="_blank" rel="noreferrer">
+            </button>
+            <button
+              type="button"
+              className="start-learn-link"
+              onClick={() => useAppStore.getState().setTutorialOpen(true)}
+              title="教程末尾附快捷键速查"
+            >
               快捷键速查
-            </a>
-            <a className="start-learn-link" href="https://reelix.xiaofang.studio" target="_blank" rel="noreferrer">
-              小方工作室官网
-            </a>
+            </button>
+            <button
+              type="button"
+              className="start-learn-link"
+              onClick={() => useAppStore.getState().setSettingsOpen(true)}
+            >
+              偏好设置
+            </button>
           </div>
         </div>
 
@@ -288,6 +338,12 @@ export function StartScreen() {
             </div>
           )}
         </div>
+
+        {/* 底部信息：版权与版本，和启动页同一套口径 */}
+        <footer className="start-footer">
+          <span>© 2026 小方工作室 · XiaoFang Studio</span>
+          <span className="start-footer-ver">Reelix 0.1.0 · 本地渲染引擎（ffmpeg）</span>
+        </footer>
       </div>
     </div>
   );

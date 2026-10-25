@@ -23,6 +23,66 @@ pub struct Settings {
     pub auto_save_interval_ms: u64,
     /// 界面语言，全中文界面固定 zh-CN
     pub language: String,
+    /// 界面主题：light / dark（旧设置缺省时按浅色，兼容老配置）
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    /// 静止图片上轨的默认时长（毫秒）。旧配置缺省时 5 秒。
+    #[serde(default = "default_image_ms")]
+    pub image_default_ms: u64,
+    /// 新建项目管理窗口 / 新工程用的默认转场时长（毫秒）。旧配置缺省时 500ms。
+    #[serde(default = "default_transition_ms")]
+    pub transition_default_ms: u64,
+    /// 手动新建字幕 / 文字的默认时长（毫秒）。旧配置缺省时 3 秒。
+    #[serde(default = "default_subtitle_ms")]
+    pub subtitle_default_ms: u64,
+    /// 新建工程默认画幅宽。缺省 1920。
+    #[serde(default = "default_width")]
+    pub default_width: u32,
+    /// 新建工程默认画幅高。缺省 1080。
+    #[serde(default = "default_height")]
+    pub default_height: u32,
+    /// 新建工程默认帧率。缺省 25。
+    #[serde(default = "default_frame_rate")]
+    pub default_frame_rate: f64,
+    /// 时间线自动吸附总开关。缺省开。
+    #[serde(default = "default_true")]
+    pub snap_enabled: bool,
+}
+
+/// 默认主题：浅色（绿雾林浅色主题）。
+fn default_theme() -> String {
+    "light".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// 静止图片默认 5 秒——剪映/PR 都是这个值，放上来不至于一闪而过。
+fn default_image_ms() -> u64 {
+    5000
+}
+
+/// 转场默认 0.5 秒，足够看清又不拖沓。
+fn default_transition_ms() -> u64 {
+    500
+}
+
+/// 字幕默认 3 秒，一句话读得完。
+fn default_subtitle_ms() -> u64 {
+    3000
+}
+
+fn default_width() -> u32 {
+    1920
+}
+
+fn default_height() -> u32 {
+    1080
+}
+
+fn default_frame_rate() -> f64 {
+    25.0
 }
 
 impl Default for Settings {
@@ -33,6 +93,14 @@ impl Default for Settings {
             preview_scale: 1.0,
             auto_save_interval_ms: DEFAULT_AUTO_SAVE_MS,
             language: "zh-CN".into(),
+            theme: default_theme(),
+            image_default_ms: default_image_ms(),
+            transition_default_ms: default_transition_ms(),
+            subtitle_default_ms: default_subtitle_ms(),
+            default_width: default_width(),
+            default_height: default_height(),
+            default_frame_rate: default_frame_rate(),
+            snap_enabled: true,
         }
     }
 }
@@ -41,6 +109,23 @@ impl Settings {
     /// 把预览缩放夹到合法区间。
     pub fn clamp_preview_scale(&mut self) {
         self.preview_scale = self.preview_scale.clamp(0.25, 1.0);
+    }
+
+    /// 把所有数值字段夹到合法区间。
+    ///
+    /// 手改坏了 settings.json 也不会让软件变得莫名其妙：
+    /// 时长类最少 1 帧（按当前帧率算 40ms）、最多 10 分钟。
+    pub fn clamp_all(&mut self) {
+        self.clamp_preview_scale();
+        self.image_default_ms = self.image_default_ms.clamp(200, 600_000);
+        self.transition_default_ms = self.transition_default_ms.clamp(0, 10_000);
+        self.subtitle_default_ms = self.subtitle_default_ms.clamp(200, 600_000);
+        self.default_width = self.default_width.clamp(16, 16_384);
+        self.default_height = self.default_height.clamp(16, 16_384);
+        self.default_frame_rate = self.default_frame_rate.clamp(1.0, 240.0);
+        if !self.default_frame_rate.is_finite() {
+            self.default_frame_rate = default_frame_rate();
+        }
     }
 
     /// 配置文件路径：`%APPDATA%\Reelix\settings.json`。
@@ -58,7 +143,7 @@ impl Settings {
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Settings>(&bytes).ok())
             .unwrap_or_default();
-        settings.clamp_preview_scale();
+        settings.clamp_all();
         settings
     }
 

@@ -1,0 +1,136 @@
+/*
+ * 启动页样式 —— Strata / Reelix 同一家。
+ * 左侧黑色渐晕保白字，右半边无遮罩让背景保持清透。
+ * 标题走超粗字重（达芬奇那种整块厚实的观感），故意放慢整体节奏。
+ */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  /* 深绿兜底：背景图未加载/加载失败时也不会出现白底白字 */
+  background-color: #0a1410;
+  background-size: cover;
+  background-position: center;
+  transition: opacity 0.62s ease;
+}
+.splash--fading { opacity: 0; }
+
+.splash::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  /* 左侧黑色阴影，向右渐隐 —— 只保左半边可读性，右半边保持画面 */
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.84) 0%,
+    rgba(0, 0, 0, 0.68) 28%,
+    rgba(0, 0, 0, 0.33) 46%,
+    rgba(0, 0, 0, 0) 58%
+  );
+}
+
+.splash__inner {
+  position: absolute;
+  left: 6vw;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #fff;
+  max-width: 760px;
+  user-select: none;
+  animation: splash-rise 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes splash-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -50%, 0) translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, -50%, 0) translateX(0);
+  }
+}
+
+/*
+ * 超粗标题：优先用系统里最黑的那几款（Segoe UI Black / Arial Black），
+ * 再用 -webkit-text-stroke 同色描边二次加粗，得到整块厚实的块面感。
+ */
+.splash__name {
+  font-family: "Segoe UI Black", "Arial Black", "Inter Tight", "Inter",
+    "Helvetica Neue", "Microsoft YaHei UI", sans-serif;
+  font-size: clamp(84px, 13vw, 190px);
+  font-weight: 900;
+  font-stretch: condensed;
+  letter-spacing: -0.045em;
+  line-height: 0.9;
+  color: #fff;
+  -webkit-text-stroke: 2.6px #fff;
+  paint-order: stroke fill;
+  text-shadow: 0 4px 34px rgba(0, 0, 0, 0.42);
+}
+
+.splash__meta {
+  margin-top: 22px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.88);
+  animation: splash-fade 700ms ease 260ms both;
+}
+
+.splash__loading {
+  margin-top: 46px;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.8);
+  animation: splash-fade 700ms ease 420ms both;
+}
+.splash__pct {
+  margin-left: 8px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.splash__bar {
+  margin-top: 12px;
+  width: 320px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+  animation: splash-fade 700ms ease 420ms both;
+}
+.splash__bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.94);
+  transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 底部信息条：左版权、右版本，压在渐晕暗区上保证可读 */
+.splash__bottom {
+  position: absolute;
+  left: 6vw;
+  right: 6vw;
+  bottom: 26px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 24px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.62);
+  user-select: none;
+  animation: splash-fade 700ms ease 640ms both;
+}
+.splash__bottom-ver {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes splash-fade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}

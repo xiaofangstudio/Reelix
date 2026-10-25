@@ -66,6 +66,7 @@ export type EffectType =
   | "emboss"
   | "posterize"
   | "colorWheels"
+  | "blendSingle"
   | "levels"
   | "blur"
   | "sharpen"

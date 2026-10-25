@@ -5606,13 +5606,14 @@ input {
   scrollbar-width: thin;
 }
 
+/* 五五分：默认 V 区、A 区各占一半（可被界面上的分隔条拖动覆盖） */
 .tl-zone-v {
-  flex: 1 1 55%;
+  flex: 1 1 50%;
   border-bottom: 2px solid var(--rl-border);
 }
 
 .tl-zone-a {
-  flex: 1 1 45%;
+  flex: 1 1 50%;
 }
 
 .tl-zone::-webkit-scrollbar {
@@ -5644,12 +5645,12 @@ input {
 }
 
 .tl-gutter-zone-v {
-  flex: 1 1 55%;
+  flex: 1 1 50%;
   border-bottom: 2px solid var(--rl-border);
 }
 
 .tl-gutter-zone-a {
-  flex: 1 1 45%;
+  flex: 1 1 50%;
 }
 /* 二级菜单：默认隐藏，hover 父项才弹出（修「子菜单叠在一起/横向滚动」bug） */
 .menu-dropdown.sub {
@@ -5915,8 +5916,26 @@ input {
   overflow-y: auto;
   background:
     radial-gradient(1200px 600px at 80% -10%, rgba(87, 192, 143, 0.12), transparent 60%),
-    radial-gradient(900px 500px at 0% 110%, rgba(59, 130, 246, 0.10), transparent 60%),
+    radial-gradient(900px 500px at 0% 110%, rgba(38, 115, 79, 0.10), transparent 60%),
     var(--rl-bg);
+}
+
+/* 底部信息条：左版权、右版本 */
+.start-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 24px;
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rl-border);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--rl-text-mute);
+}
+.start-footer-ver {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .start-welcome {
@@ -6076,8 +6095,12 @@ input {
   font-size: 10px;
   color: var(--rl-text-faint);
 }
-/* 分区加轨按钮（V 区底加 V、A 区底加 A） */
+/* 分区加轨按钮（V 区底加 V、A 区底加 A）：
+   sticky 常驻在分区可见区底部，轨道再多也不用滚动去找它 */
 .tl-add-zone-track {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   flex: 0 0 22px;
   display: flex;
   align-items: center;
@@ -6085,6 +6108,7 @@ input {
   margin: 2px 4px;
   font-size: 11px;
   color: var(--rl-text-faint);
+  background: var(--rl-surface-2);
   border: 1px dashed var(--rl-border);
   border-radius: var(--rl-radius-sm);
 }
@@ -6471,12 +6495,12 @@ input {
 }
 
 .tl-gutter-zone-v {
-  flex: 1 1 55%;
+  flex: 1 1 50%;
   border-bottom: 1px solid var(--rl-border);
 }
 
 .tl-gutter-zone-a {
-  flex: 1 1 45%;
+  flex: 1 1 50%;
 }
 
 /* 右侧：V/A 两个独立滚动容器，纵向互不影响，横向通过 JS 同步 */
@@ -6617,6 +6641,13 @@ input {
 .start-learn-link:hover {
   color: var(--rl-accent);
   border-color: var(--rl-accent);
+}
+
+/* 学习区小图标：内联 SVG，跟文字基线对齐 */
+.start-learn-icon {
+  flex: 0 0 auto;
+  margin-right: 6px;
+  vertical-align: -2px;
 }
 /* 二级菜单：可点开 + 定位在右侧（不再依赖 hover 生效） */
 .menu-sub-wrap {
@@ -6812,8 +6843,10 @@ input {
   flex: 0 0 auto;
 }
 /* V/A 分区最终版（修「V 轨不见了」）：两区显式高度 + 独立滚动，V 区更大 */
+/* 内容区 V/A 比例由内联 flex 跟随 vaSplit（默认各半，分割线可拖）。
+   这里不再用 !important 覆盖——之前 1.6:1 的硬覆盖会让分割线拖动失效。 */
 .tl-scroll > .tl-content > .tl-zone {
-  flex: 1 1 0 !important;
+  flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
@@ -6821,14 +6854,7 @@ input {
 }
 
 .tl-scroll > .tl-content > .tl-zone-v {
-  flex-grow: 1.6 !important;
-  flex-basis: 0 !important;
   border-bottom: 1px solid var(--rl-border);
-}
-
-.tl-scroll > .tl-content > .tl-zone-a {
-  flex-grow: 1 !important;
-  flex-basis: 0 !important;
 }
 
 /* 轨道颜色标识（用户：素材=瓦片、音频=波纹、空对象=红、摄像机=黄） */
@@ -6837,7 +6863,7 @@ input {
 }
 
 .tl-track[data-kind="audio"] {
-  border-left: 3px solid #3b82f6;
+  border-left: 3px solid #2a9d8f;
 }
 
 .tl-track[data-kind="subtitle"] {
@@ -6910,13 +6936,13 @@ input {
   color: var(--rl-accent-ink);
   font-weight: 600;
   border: 1px solid transparent;
-  box-shadow: 0 1px 3px rgba(47, 125, 246, 0.28);
+  box-shadow: 0 1px 3px rgba(87, 192, 143, 0.28);
 }
 
 .btn-primary:hover:not(:disabled) {
   background: var(--rl-accent-hover);
   filter: none;
-  box-shadow: 0 2px 8px rgba(47, 125, 246, 0.36);
+  box-shadow: 0 2px 8px rgba(87, 192, 143, 0.36);
 }
 
 .btn-primary:active:not(:disabled) {
@@ -6981,7 +7007,7 @@ input {
 }
 
 .tl-va-divider:hover::after {
-  background: #ffffff;
+  background: var(--rl-accent);
 }
 
 body.resizing-va {
@@ -6999,7 +7025,7 @@ body.resizing-va {
   color: #ffffff;
   background: var(--rl-accent-fill);
   border-radius: var(--rl-radius-sm);
-  box-shadow: 0 2px 8px rgba(47, 125, 246, 0.4);
+  box-shadow: 0 2px 8px rgba(87, 192, 143, 0.4);
   pointer-events: none;
   white-space: nowrap;
 }
@@ -7021,7 +7047,7 @@ body.resizing-va {
 }
 
 .tl-curve-seg:hover {
-  fill: rgba(47, 125, 246, 0.26);
+  fill: rgba(87, 192, 143, 0.26);
 }
 
 .tl-curve-seg-label {
@@ -7070,4 +7096,554 @@ body.resizing-va {
   position: fixed;
   inset: 0;
   z-index: 940;
+}
+/* ============ 底部 Tab（时间轴/调色） ============ */
+.lower-tabs {
+  flex: 0 0 28px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  background: var(--rl-surface);
+  border-bottom: 1px solid var(--rl-border);
+}
+
+.lower-tabs button {
+  padding: 4px 14px;
+  font-size: 12px;
+  color: var(--rl-text-dim);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.lower-tabs button:hover {
+  color: var(--rl-text);
+}
+
+.lower-tabs button.on {
+  color: var(--rl-accent);
+  border-bottom-color: var(--rl-accent);
+  font-weight: 600;
+}
+
+.lower > .lower-tabs + * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ============ 调色面板 ============ */
+.color-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+  padding: 10px 12px;
+  overflow: auto;
+  background: var(--rl-bg);
+}
+
+.color-panel-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--rl-text-mute);
+  font-size: 13px;
+  padding: 0 40px;
+  text-align: center;
+}
+
+.color-panel-left {
+  flex: 1.4;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.color-panel-right {
+  flex: 1;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.color-wheel {
+  position: relative;
+  width: 108px;
+  text-align: center;
+}
+
+.color-wheel canvas {
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--rl-border);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.color-wheel-dot {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #101418;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+}
+
+.color-wheel-label {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--rl-text-dim);
+}
+
+.color-levels {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.color-levels-row,
+.color-quick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--rl-text-dim);
+}
+
+.color-levels-row span,
+.color-quick-row span {
+  flex: 0 0 56px;
+}
+
+.color-levels-row input,
+.color-quick-row input {
+  flex: 1;
+  accent-color: var(--rl-accent);
+}
+
+.color-levels-row em,
+.color-quick-row em {
+  flex: 0 0 44px;
+  font-style: normal;
+  font-family: var(--rl-font-mono);
+  font-size: 11px;
+  text-align: right;
+  color: var(--rl-text);
+}
+
+.color-grade-quick {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.scope-box {
+  border: 1px solid var(--rl-border);
+  border-radius: var(--rl-radius);
+  padding: 6px;
+  background: #0b1210;
+}
+
+.scope-title {
+  font-size: 11px;
+  color: #8a9a93;
+  margin-bottom: 4px;
+}
+
+.scope-box canvas {
+  width: 100%;
+  display: block;
+  border-radius: 2px;
+}
+
+.color-share {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 76px;
+  padding: 4px 2px 0;
+}
+
+.color-share-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+}
+
+.color-share-bar {
+  width: 100%;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+}
+
+.color-share-col span {
+  font-size: 9px;
+  color: #8a9a93;
+  margin-top: 3px;
+}
+/* ============ 属性面板顶部小页签（剪映式：基础/调节/变速/音频/3D） ============ */
+.prop-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  padding: 2px 8px 6px;
+  border-bottom: 1px solid var(--rl-border);
+  background: var(--rl-surface);
+}
+
+.prop-tabs button {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--rl-text-dim);
+  background: transparent;
+  border: none;
+  border-radius: var(--rl-radius-sm);
+  cursor: pointer;
+}
+
+.prop-tabs button:hover {
+  color: var(--rl-text);
+  background: var(--rl-surface-2);
+}
+
+.prop-tabs button.on {
+  color: var(--rl-accent);
+  background: var(--rl-accent-soft);
+  font-weight: 600;
+}
+
+/* ============ 调节页（调色控件窄版：面板宽 300px） ============ */
+.color-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.color-controls-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.color-controls-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 三个色轮横排放不下：竖排一列两行（1+2）改成 flex wrap 居中 */
+.color-controls .color-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+/* ============ 曲线变速编辑器（剪映式折线：片段内时刻 → 速度） ============ */
+.speed-curve {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--rl-border);
+}
+
+.speed-curve-svg {
+  display: block;
+  width: 100%;
+  height: 92px;
+  margin-top: 8px;
+  background: var(--rl-surface-2);
+  border: 1px solid var(--rl-border);
+  border-radius: var(--rl-radius-sm);
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.speed-curve-base {
+  stroke: var(--rl-accent-line);
+  stroke-width: 0.4;
+  stroke-dasharray: 2 1.5;
+}
+
+.speed-curve-grid {
+  stroke: var(--rl-border);
+  stroke-width: 0.3;
+}
+
+.speed-curve-line {
+  fill: none;
+  stroke: var(--rl-accent);
+  stroke-width: 0.8;
+  stroke-linejoin: round;
+}
+
+.speed-curve-kf {
+  fill: var(--rl-accent-fill);
+  stroke: var(--rl-bg);
+  stroke-width: 0.5;
+  cursor: grab;
+}
+
+.speed-curve-kf.dragging {
+  fill: var(--rl-accent-hover);
+  cursor: grabbing;
+}
+
+.speed-curve-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--rl-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.speed-curve-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.speed-curve-tip {
+  margin-top: 8px;
+  line-height: 1.6;
+}
+
+/* ============ 设置面板（模态）：主题 / 预览性能 / 自动保存 / 缓存 ============ */
+.settings-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 20, 16, 0.45);
+  backdrop-filter: blur(3px);
+}
+
+.settings-dialog {
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  background: var(--rl-surface);
+  border: var(--rl-border-w) solid var(--rl-border-strong);
+  border-radius: var(--rl-radius-lg);
+  box-shadow: var(--rl-shadow-pop);
+  overflow: hidden;
+}
+
+.settings-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rl-border);
+}
+
+.settings-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 16px 12px;
+}
+
+.settings-loading {
+  padding: 40px 0;
+  text-align: center;
+  color: var(--rl-text-mute);
+}
+
+.settings-group {
+  padding: 14px 0 12px;
+  border-bottom: 1px solid var(--rl-border);
+}
+.settings-group:last-child {
+  border-bottom: 0;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.settings-row .label {
+  flex: 0 0 84px;
+  font-size: 12px;
+  color: var(--rl-text-dim);
+}
+.settings-row input[type="range"] {
+  flex: 1 1 auto;
+}
+.settings-row .value.num {
+  flex: 0 0 120px;
+}
+
+.settings-seg {
+  display: flex;
+  gap: 6px;
+}
+
+.settings-note {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--rl-text-mute);
+}
+
+.settings-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--rl-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.settings-foot {
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  border-top: 1px solid var(--rl-border);
+  font-size: 11px;
+  color: var(--rl-text-mute);
+}
+
+/* ============ 特效库「常用」快捷行（新手不用翻分类） ============ */
+.fx-quick {
+  margin-bottom: 10px;
+}
+
+.fx-quick-title {
+  font-size: 11px;
+  color: var(--rl-text-mute);
+  margin-bottom: 6px;
+}
+
+.fx-quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fx-quick-item {
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--rl-text);
+  background: var(--rl-surface-2);
+  border: 1px solid var(--rl-border);
+  border-radius: var(--rl-radius-sm);
+  cursor: pointer;
+}
+.fx-quick-item:hover:not(:disabled) {
+  border-color: var(--rl-border-strong);
+}
+.fx-quick-item.selected {
+  color: var(--rl-text-invert);
+  background: var(--rl-accent-fill);
+  border-color: var(--rl-accent-line);
+}
+.fx-quick-item:disabled {
+  color: var(--rl-text-faint);
+  cursor: not-allowed;
+}
+
+/* ============ 内置入门教程（模态） ============ */
+.tut-dialog {
+  width: min(720px, calc(100vw - 48px));
+}
+
+.tut-intro {
+  padding: 12px 14px;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--rl-text-dim);
+  background: var(--rl-surface-2);
+  border-left: 3px solid var(--rl-accent);
+  border-radius: var(--rl-radius-sm);
+}
+
+.tut-body {
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--rl-text);
+}
+
+.tut-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tut-key {
+  display: inline-block;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-family: var(--rl-font-mono, ui-monospace, monospace);
+  color: var(--rl-text-dim);
+  background: var(--rl-surface-3);
+  border: 1px solid var(--rl-border);
+  border-radius: var(--rl-radius-sm);
+  white-space: nowrap;
+}
+
+.tut-shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tut-shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tut-shortcut-desc {
+  font-size: 12.5px;
+  color: var(--rl-text-dim);
+}
+
+/* 开场界面的「入门教程 / 快捷键 / 偏好设置」现在是真的按钮，
+   但沿用原来链接的排版——清掉按钮默认外观，别出现一块灰底方块。 */
+button.start-learn-link {
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: var(--rl-accent);
+  cursor: pointer;
+  text-align: left;
+}
+
+button.start-learn-link:hover {
+  text-decoration: underline;
 }

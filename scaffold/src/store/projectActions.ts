@@ -28,6 +28,52 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
 /** 素材探测不出时长时的兜底片段长度，避免放上轨道只剩一格 */
 const FALLBACK_CLIP_MS = 5000;
 
+/** 读一项偏好失败时的兜底值（不让设置坏点卡住剪辑） */
+const FALLBACK_IMAGE_MS = 5000;
+const FALLBACK_SUBTITLE_MS = 3000;
+const FALLBACK_TRANSITION_MS = 500;
+
+/**
+ * 静止图片的上轨时长来自偏好设置（「编辑默认值 ▸ 静止图片默认时长」）。
+ *
+ * 图片素材本身没有时长：探测给的是 0，以前统一兜底 5 秒，用户改不了。
+ * 现在跟着设置走，调了偏好立刻生效。
+ */
+async function imageDefaultMs(): Promise<number> {
+  try {
+    const { getSettings } = await import("../services/settings");
+    const s = await getSettings();
+    const ms = Number(s.imageDefaultMs);
+    return Number.isFinite(ms) && ms > 0 ? ms : FALLBACK_IMAGE_MS;
+  } catch {
+    return FALLBACK_IMAGE_MS;
+  }
+}
+
+/** 默认转场 / 淡入淡出时长，来自偏好设置。 */
+export async function transitionDefaultMs(): Promise<number> {
+  try {
+    const { getSettings } = await import("../services/settings");
+    const s = await getSettings();
+    const ms = Number(s.transitionDefaultMs);
+    return Number.isFinite(ms) && ms >= 0 ? ms : FALLBACK_TRANSITION_MS;
+  } catch {
+    return FALLBACK_TRANSITION_MS;
+  }
+}
+
+/** 默认字幕时长，来自偏好设置。 */
+async function subtitleDefaultMs(): Promise<number> {
+  try {
+    const { getSettings } = await import("../services/settings");
+    const s = await getSettings();
+    const ms = Number(s.subtitleDefaultMs);
+    return Number.isFinite(ms) && ms > 0 ? ms : FALLBACK_SUBTITLE_MS;
+  } catch {
+    return FALLBACK_SUBTITLE_MS;
+  }
+}
+
 /**
  * 把后端抛出来的东西转成一句中文。Rust 侧的错误本来就是中文人话，
  * 直接透传；遇到意外类型给一句兜底，绝不把英文对象塞进提示条。
@@ -303,9 +349,17 @@ export async function appendAssetToTrackEnd(asset: Asset): Promise<boolean> {
  * 声音进最靠近落点轨道下方的音频轨，两段同起点同长、共用一个
  * compound_id——默认粘起来，选中与移动都联动。
  */
+/**
+ * 把素材落到时间线上。
+ *
+ * `trackId` 为 null = 拖在空白处：按素材类型找第一条可用轨，
+ * 一条都没有就新建一条（剪映语义：拖哪儿都能落，不用先建轨）。
+ * 带音轨的视频还会把声音拆到音频轨上；没有音频轨就建一条——
+ * 老代码找不到音频轨就静默丢弃，用户看到的就是「A 轨没有自动出现」。
+ */
 export async function placeAssetAt(
   assetId: Id,
-  trackId: Id,
+  trackId: Id | null,
   startMs: number
 ): Promise<boolean> {
   const snapshot = await projectApi.getProject();
@@ -313,26 +367,41 @@ export async function placeAssetAt(
   if (!sequence) return false;
   const asset = snapshot.assets.find((a) => a.id === assetId);
   if (!asset) return false;
-  const durationMs = asset.durationMs > 0 ? asset.durationMs : FALLBACK_CLIP_MS;
+  // 图片素材没有内在时长，按偏好设置给静止时长；视频/音频按素材真实时长走
+  const durationMs =
+    asset.kind === "image"
+      ? await imageDefaultMs()
+      : asset.durationMs > 0
+        ? asset.durationMs
+        : FALLBACK_CLIP_MS;
+  const wanted: Track["kind"] = asset.kind === "audio" ? "audio" : "video";
 
   try {
-    const compound = asset.kind === "video" && asset.hasAudio ? newCompoundId() : undefined;
-    await timeline.addClip(trackId, asset.id, startMs, durationMs, compound);
-
-    // 带音轨的视频：声音另落到音频轨（优先落点轨道下方的第一条，找不到就用最后一条音频轨）
-    if (compound) {
-      const droppedIndex = sequence.tracks.findIndex((t) => t.id === trackId);
-      const audioTrack =
-        sequence.tracks
-          .map((t, i) => ({ t, i }))
-          .filter(({ t }) => t.kind === "audio")
-          .filter(({ i }) => i > droppedIndex)
-          .map(({ t }) => t)
-          .sort((a, b) => a.index - b.index)[0] ??
-        sequence.tracks.find((t) => t.kind === "audio");
-      if (audioTrack) {
-        await timeline.addClip(audioTrack.id, asset.id, startMs, durationMs, compound);
+    // 画面/声音落点：给了轨就用；没给就找第一条可用的同类型轨，没有就新建
+    let targetId = trackId;
+    if (targetId === null) {
+      const existing = sequence.tracks.find((t) => t.kind === wanted && !t.locked);
+      if (existing) {
+        targetId = existing.id;
+      } else {
+        const created = await timeline.addTrack(wanted, sequence.id);
+        targetId = created.id;
       }
+    }
+
+    const compound = asset.kind === "video" && asset.hasAudio ? newCompoundId() : undefined;
+    await timeline.addClip(targetId, asset.id, startMs, durationMs, compound);
+
+    // 带音轨的视频：声音另落到音频轨。优先同 index（同一行），
+    // 其次最上面一条，都没有就新建——绝不能悄悄把声音扔掉。
+    if (compound) {
+      const target = sequence.tracks.find((t) => t.id === targetId);
+      const audioTracks = sequence.tracks.filter((t) => t.kind === "audio" && !t.locked);
+      const audioTrack =
+        (target ? audioTracks.find((t) => t.index === target.index) : undefined) ??
+        audioTracks.sort((a, b) => b.index - a.index)[0] ??
+        (await timeline.addTrack("audio", sequence.id));
+      await timeline.addClip(audioTrack.id, asset.id, startMs, durationMs, compound);
     }
 
     await refreshProject();
@@ -821,7 +890,7 @@ export async function addSubtitleAtPlayhead(): Promise<boolean> {
     const clip = await subtitle.addSubtitleClip(
       sequence.id,
       Math.max(0, state.playheadMs),
-      2000,
+      await subtitleDefaultMs(),
       "新字幕"
     );
     await refreshProject();
@@ -861,7 +930,7 @@ export async function addTextAtPlayhead(preset: { text: string }): Promise<boole
     const clip = await subtitle.addSubtitleClip(
       sequence.id,
       Math.max(0, state.playheadMs),
-      3000,
+      await subtitleDefaultMs(),
       preset.text
     );
     await refreshProject();
@@ -1001,14 +1070,32 @@ export async function setPreviewQuality(scale: number): Promise<boolean> {
 export async function setClipTransition(
   clipId: Id,
   kind: TransitionKind | null,
-  durationMs = 500
+  durationMs?: number
 ): Promise<boolean> {
+  const ms = durationMs ?? (await transitionDefaultMs());
   try {
-    await timeline.setTransition(clipId, kind, durationMs);
+    await timeline.setTransition(clipId, kind, ms);
     await refreshProject();
     return true;
   } catch (err) {
     reportFailure(err, "设置转场失败");
+    return false;
+  }
+}
+
+/** 设置 / 清除片段尾部淡出（剪映「淡出」）；kind 传 null 清除。 */
+export async function setClipTransitionOut(
+  clipId: Id,
+  kind: TransitionKind | null,
+  durationMs?: number
+): Promise<boolean> {
+  const ms = durationMs ?? (await transitionDefaultMs());
+  try {
+    await timeline.setTransitionOut(clipId, kind, ms);
+    await refreshProject();
+    return true;
+  } catch (err) {
+    reportFailure(err, "设置淡出失败");
     return false;
   }
 }

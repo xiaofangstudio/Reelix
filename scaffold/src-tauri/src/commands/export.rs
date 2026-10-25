@@ -18,7 +18,8 @@ use crate::commands::subtitle;
 use crate::commands::project::require_project;
 use crate::compositor::decode;
 use crate::keyframe::KeyframeStore;
-use crate::media::audio::{decode_segment_stereo, MIX_SAMPLE_RATE};
+use crate::media::audio;
+use crate::media::audio::MIX_SAMPLE_RATE;
 use crate::project::model::{Project, Sequence};
 use crate::project::serialize::new_id;
 use crate::state::{lock, AppState, ExportJob};
@@ -123,8 +124,10 @@ pub fn export_edl(
                 .collect::<String>()
                 .to_uppercase();
             let reel = if reel.is_empty() { "AX".to_string() } else { reel };
-            let src_in = clip.in_ms / clip.speed.max(0.01);
-            let src_out = clip.out_ms / clip.speed.max(0.01);
+            // EDL 的源入出点就是素材时间戳：入点直接用 in_ms；
+            // 出点按变速积分算（恒定速度时等于 out_ms，曲线时取实际走完的源长）
+            let src_in = clip.in_ms;
+            let src_out = clip.in_ms + clip.source_offset(clip.duration_ms);
             let rec_out = record_in + clip.duration_ms;
             out.push_str(&format!(
                 "{:03}  {:<8} {:<3} {:<2}  {} {} {}\n",
@@ -753,16 +756,34 @@ fn mix_audio(
                 continue;
             }
             let speed = if clip.speed.abs() < f64::EPSILON { 1.0 } else { clip.speed };
-            // 交叠段在素材内的起点：入点加上（交叠起点 - 片段起点）× 速度。
-            let local_in = if clip.reversed {
-                clip.in_ms
+            // 曲线变速：按曲线积分算源区间，输出长度仍是时间线占位（∫speed）；
+            // 恒定变速走老路（atempo 保调 / 重采样变调）。
+            let pcm = if clip.has_speed_curve() {
+                let from_local = from - clip.start_ms;
+                let to_local = to - clip.start_ms;
+                audio::decode_segment_stereo_curved(
+                    Path::new(&asset.path),
+                    clip,
+                    from_local,
+                    to_local,
+                )
             } else {
-                clip.in_ms + (from - clip.start_ms) * speed
+                // 交叠段在素材内的起点：入点加上（交叠起点 - 片段起点）× 速度。
+                let local_in = if clip.reversed {
+                    clip.in_ms
+                } else {
+                    clip.in_ms + (from - clip.start_ms) * speed
+                };
+                let duration_ms = (to - from) * speed;
+                audio::decode_segment_stereo(
+                    Path::new(&asset.path),
+                    local_in,
+                    duration_ms,
+                    speed,
+                    clip.audio_pitch_shift,
+                )
             };
-            let duration_ms = (to - from) * speed;
-            let Ok(pcm) =
-                decode_segment_stereo(Path::new(&asset.path), local_in, duration_ms, speed)
-            else {
+            let Ok(pcm) = pcm else {
                 continue;
             };
             let offset = (((from - range.start_ms) / 1000.0) * MIX_SAMPLE_RATE as f64).round()

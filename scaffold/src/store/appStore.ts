@@ -207,6 +207,12 @@ interface AppState {
   /** 收起开场界面，回到编辑器 */
   hideStartScreen: () => void;
   toggleTheme: () => void;
+  /** 偏好设置面板（模态）开关：顶栏按钮 / 编辑菜单 / Ctrl+, 共用 */
+  settingsOpen: boolean;
+  setSettingsOpen: (open: boolean) => void;
+  /** 内置入门教程（模态）开关：开场界面「入门教程」与帮助菜单共用 */
+  tutorialOpen: boolean;
+  setTutorialOpen: (open: boolean) => void;
 
   pushNotice: (kind: Notice["kind"], text: string) => void;
   dismissNotice: () => void;
@@ -488,6 +494,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   page: "media",
   // 默认浅色：白 + 浅绿是主用主题，深色只是备选（见 tokens.css 顶部说明）。
   theme: "light",
+  settingsOpen: false,
+  tutorialOpen: false,
   notice: null,
   // 启动即停在开场：没有工程时不铺空面板，先让用户把画幅定下来
   startScreen: true,
@@ -646,6 +654,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   showStartScreen: () => set({ startScreen: true }),
   hideStartScreen: () => set({ startScreen: false }),
   toggleTheme: () => set({ theme: get().theme === "dark" ? "light" : "dark" }),
+  setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setTutorialOpen: (open) => set({ tutorialOpen: open }),
 
   pushNotice: (kind, text) => {
     set({ notice: { kind, text } });
@@ -843,7 +853,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { project: { ...state.project, graphs } };
     }),
 
-  setClip3DEnabled: (clipId, enabled) =>
+  setClip3DEnabled: (clipId, enabled) => {
+    // 先在本地乐观更新，点下去立刻有反馈
     set((state) => {
       if (!state.project) return {};
       return {
@@ -857,7 +868,22 @@ export const useAppStore = create<AppState>((set, get) => ({
           };
         }),
       };
-    }),
+    });
+
+    // 再真写进后端工程：不写的话下一次拉权威快照就把 3D 开关洗掉，
+    // 导出时后端也读不到 enable3D——这就是「3D 开关按下没反应」的根因。
+    void (async () => {
+      try {
+        const { timeline } = await import("../services");
+        await timeline.setClipFlags(clipId, { enable3D: enabled });
+      } catch {
+        // 写不进去就把界面拉回后端真实状态，别留个假开关骗人
+        const { refreshProject } = await import("./projectActions");
+        await refreshProject();
+        useAppStore.getState().pushNotice("error", "启用 3D 失败");
+      }
+    })();
+  },
 
   tool: "trackSelectForward",
   setTool: (tool) => set({ tool }),
@@ -929,7 +955,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   zoomLevel: 0.1,
   monitorFrameUrl: null,
   setMonitorFrameUrl: (url) => set({ monitorFrameUrl: url }),
-  setZoomLevel: (level) => set({ zoomLevel: Math.min(8, Math.max(0.02, level)) }),
+  setZoomLevel: (level) =>
+    // 缩放限位（用户定）：最大 20px/帧（30fps≈0.67px/ms），最小 20px/10s = 0.002px/ms。
+    // 刻度密度自适应已由 tickStepMs 处理（尺子式，超临界值自动加减刻度）。
+    set({ zoomLevel: Math.min(0.67, Math.max(0.002, level)) }),
 
   pickedAssetId: null,
   draggingAssetId: null,

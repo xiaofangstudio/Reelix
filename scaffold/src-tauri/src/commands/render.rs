@@ -74,10 +74,15 @@ pub(crate) struct FramePlan {
     pub source_key: Option<String>,
     /// 片段入场转场：当前时刻落在转场窗口内时才有值。
     pub transition: Option<TransitionPlan>,
+    /// 片段尾部淡出（剪映「淡出」）：末尾窗口内向黑/白渐隐，不需要前片段。
+    pub fade_out: Option<TransitionPlan>,
     /// 3D 图层变换（片段启用 3D 时带上；渲染时真作用于画面）。
     pub transform_3d: Option<crate::graph::effects::Transform3D>,
     /// 景深参数（摄像机片段提供；缺省不做模糊）。
     pub depth_of_field: Option<DepthOfField>,
+    /// 摄像机取景：序列图里挂了 camera 节点时带上（已经把关键帧烘好）。
+    /// 有它，3D 图层走真透视投影，「摄像机环绕拍摄」才有近大远小。
+    pub camera: Option<crate::graph::effects::CameraPlan>,
 }
 
 /// 景深：合焦平面 Z + 最大模糊强度（像素）。
@@ -319,6 +324,7 @@ pub(crate) fn plan_frame(
     let source = hit.and_then(|clip| clip_source(project, clip, time_ms));
     let source_key = hit.and_then(|clip| clip_source_key(project, clip));
     let transition = hit.and_then(|clip| plan_transition(sequence, project, clip, snapped_ms));
+    let fade_out = hit.and_then(|clip| plan_fade_out(clip, snapped_ms));
     // 3D 变换：命中片段且启用了 3D 才带上；摄像机片段不占画面（它的变换是全局取景，
     // 由后续迭代接），这里只对图层片段生效。
     let transform_3d = hit
@@ -331,6 +337,32 @@ pub(crate) fn plan_frame(
             anchor: [t.anchor.x as f32, t.anchor.y as f32],
         });
 
+    // 摄像机取景：图里挂了 camera 节点就用它的位置 / 看向点 / 焦距。
+    // 参数已经过 bake_graph，关键帧驱动的环绕运动在这一刻就是具体数值。
+    // 之前摄像机节点纯属摆设——建得出来、拖得动，渲染一眼不看它。
+    let camera = graph
+        .nodes
+        .iter()
+        .find(|n| n.node_type == "camera" && !n.bypassed)
+        .map(|n| {
+            let num = |k: &str, fallback: f64| {
+                n.params.get(k).and_then(|v| v.as_f64()).unwrap_or(fallback)
+            };
+            crate::graph::effects::CameraPlan {
+                position: [
+                    num("posX", 0.0) as f32,
+                    num("posY", 0.0) as f32,
+                    num("posZ", -1000.0) as f32,
+                ],
+                target: [
+                    num("targetX", 0.0) as f32,
+                    num("targetY", 0.0) as f32,
+                    num("targetZ", 0.0) as f32,
+                ],
+                focal_length: num("focalLength", 50.0) as f32,
+            }
+        });
+
     Ok(FramePlan {
         width,
         height,
@@ -340,8 +372,31 @@ pub(crate) fn plan_frame(
         source,
         source_key,
         transition,
+        fade_out,
         transform_3d,
         depth_of_field: None,
+        camera,
+    })
+}
+
+/// 尾部淡出计划：片段末尾 `duration` 毫秒内向黑/白渐隐。
+/// progress 从 0（淡出开始）到 1（全黑/全白），落在窗口外返回 None。
+fn plan_fade_out(clip: &Clip, snapped_ms: f64) -> Option<TransitionPlan> {
+    let transition = clip.transition_out.as_ref()?;
+    let duration = transition.duration_ms.min(clip.duration_ms);
+    if duration <= 0.0 {
+        return None;
+    }
+    let local_ms = snapped_ms - clip.start_ms;
+    let window_start = clip.duration_ms - duration;
+    if local_ms <= window_start {
+        return None;
+    }
+    let progress = ((local_ms - window_start) / duration).clamp(0.0, 1.0) as f32;
+    Some(TransitionPlan {
+        kind: transition.kind.clone(),
+        progress,
+        previous: None,
     })
 }
 
@@ -349,26 +404,25 @@ pub(crate) fn plan_frame(
 ///
 /// 时刻会夹到片段的入出点之间：转场取前片段画面时，时刻可能已经越过它的
 /// 出点（本模型里相邻片段不重叠），这时停在最后一帧，不拿越界时间喂 ffmpeg。
+/// 曲线变速时走积分映射（source_offset），恒定变速时退化为线性（行为不变）。
 fn clip_source(project: &Project, clip: &Clip, time_ms: f64) -> Option<(String, f64)> {
     let asset = project.assets.iter().find(|a| a.id == clip.asset_id)?;
-    let speed = if clip.speed.abs() < f64::EPSILON {
-        1.0
-    } else {
-        clip.speed
-    };
-    let offset = (time_ms - clip.start_ms) * speed;
+    // 片段内已走过的时长 → 素材内偏移（曲线下是速度积分，恒定速度时是线性乘积）
+    let walked = clip.source_offset(time_ms - clip.start_ms);
     let low = clip.in_ms.min(clip.out_ms);
     let high = clip.in_ms.max(clip.out_ms);
     // 倒放：从出点往回数；正向：从入点往后数。两侧都夹到素材范围内。
     let local_ms = if clip.reversed {
-        (clip.out_ms - offset).clamp(low, high)
+        (clip.out_ms - walked).clamp(low, high)
     } else {
-        (clip.in_ms + offset).clamp(low, high)
+        (clip.in_ms + walked).clamp(low, high)
     };
     Some((asset.path.clone(), local_ms))
 }
 
-/// 片段来源指纹：素材路径 + 入出点 + 速度 + 倒放。
+/// 片段来源指纹：素材路径 + 入出点 + 速度 + 倒放 + 变速曲线。
+///
+/// 曲线进指纹：改一个速度关键点，指纹就变，监视器不会拿旧画面糊弄。
 fn clip_source_key(project: &Project, clip: &Clip) -> Option<String> {
     let asset = project.assets.iter().find(|a| a.id == clip.asset_id)?;
     let speed = if clip.speed.abs() < f64::EPSILON {
@@ -376,9 +430,25 @@ fn clip_source_key(project: &Project, clip: &Clip) -> Option<String> {
     } else {
         clip.speed
     };
+    let curve = clip
+        .speed_curve
+        .as_ref()
+        .map(|keys| {
+            keys.iter()
+                .map(|k| format!("{}@{:.3}", k.speed, k.t_ms))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
     Some(format!(
-        "{}|{:.3}|{:.3}|{:.6}|{}",
-        asset.path, clip.in_ms, clip.out_ms, speed, clip.reversed
+        "{}|{:.3}|{:.3}|{:.6}|{}|{}|{}",
+        asset.path,
+        clip.in_ms,
+        clip.out_ms,
+        speed,
+        clip.reversed,
+        clip.audio_pitch_shift,
+        curve
     ))
 }
 
@@ -450,7 +520,12 @@ pub(crate) fn render_plan(plan: &FramePlan) -> Result<Frame, String> {
     // 在这一步作用到画面上（移出画布的部分变透明）。以前这里直接跳过，
     // 导致 3D 开关、XYZ、旋转全是“存了数据不生效”的假功能。
     if let Some(tf) = &plan.transform_3d {
-        frame = crate::graph::effects::transform3d(&frame, tf);
+        // 挂了摄像机就走真透视（贴图会随机位近大远小，绕着拍看得出来）；
+        // 没挂摄像机时保持原来的仿射行为，不动既有片子的观感。
+        frame = match &plan.camera {
+            Some(cam) => crate::graph::effects::project_layer_camera(&frame, tf, cam),
+            None => crate::graph::effects::transform3d(&frame, tf),
+        };
         // 景深：Z 偏离合焦面时按强度模糊（焦点默认 z=0）
         if let Some(dof) = &plan.depth_of_field {
             frame = crate::graph::effects::depth_of_field(
@@ -462,26 +537,46 @@ pub(crate) fn render_plan(plan: &FramePlan) -> Result<Frame, String> {
         }
     }
 
-    let Some(transition) = &plan.transition else {
-        return Ok(frame);
+    let mut frame = frame;
+
+    if let Some(transition) = &plan.transition {
+        // 前片段解不出来时不拖垮整帧，退化成从黑/白渐入。
+        let previous = transition.previous.as_ref().and_then(|(asset, local_ms)| {
+            let mut prev =
+                decode::decode_frame(Path::new(asset), *local_ms, plan.width, plan.height).ok()?;
+            if !plan.order.is_empty() {
+                prev = composite(&plan.graph, &plan.order, prev);
+            }
+            Some(prev)
+        });
+
+        frame = apply_transition(
+            &transition.kind,
+            transition.progress,
+            previous.as_ref(),
+            &frame,
+        );
+    }
+
+    // 尾部淡出（剪映「淡出」）放在最后：出场渐隐盖住转场结果。
+    // progress 0 = 原画面，1 = 全黑/全白——与入场的方向正好相反。
+    if let Some(fade) = &plan.fade_out {
+        frame = apply_fade_out(&fade.kind, fade.progress, &frame);
+    }
+
+    Ok(frame)
+}
+
+/// 尾部淡出：向黑/白渐隐。`progress` 0 = 原画面，1 = 全黑/全白。
+fn apply_fade_out(kind: &str, progress: f32, frame: &Frame) -> Frame {
+    let p = progress.clamp(0.0, 1.0);
+    let color = if kind == "dipToWhite" {
+        [1.0, 1.0, 1.0, 1.0]
+    } else {
+        [0.0, 0.0, 0.0, 1.0]
     };
-
-    // 前片段解不出来时不拖垮整帧，退化成从黑/白渐入。
-    let previous = transition.previous.as_ref().and_then(|(asset, local_ms)| {
-        let mut prev =
-            decode::decode_frame(Path::new(asset), *local_ms, plan.width, plan.height).ok()?;
-        if !plan.order.is_empty() {
-            prev = composite(&plan.graph, &plan.order, prev);
-        }
-        Some(prev)
-    });
-
-    Ok(apply_transition(
-        &transition.kind,
-        transition.progress,
-        previous.as_ref(),
-        &frame,
-    ))
+    let target = Frame::filled(frame.width, frame.height, color);
+    mix_frames(frame, &target, p)
 }
 
 /// 按转场类型把前后两帧混合成一帧。
@@ -1080,6 +1175,8 @@ mod tests {
             out_ms: 1000.0,
             speed: 1.0,
             reversed: false,
+            speed_curve: None,
+            audio_pitch_shift: false,
             node_id: "n1".into(),
             compound_id: None,
             enable_3d: false,
@@ -1088,6 +1185,7 @@ mod tests {
             enabled: true,
             label: None,
             transition_in: None,
+            transition_out: None,
                 audio_highpass_hz: None,
                 audio_lowpass_hz: None,
                 audio_delay_ms: None,
@@ -1264,6 +1362,8 @@ mod tests {
                 out_ms: 1000.0,
                 speed: 1.0,
                 reversed: false,
+                speed_curve: None,
+                audio_pitch_shift: false,
                 node_id: "n1".into(),
                 compound_id: None,
                 enable_3d: false,
@@ -1272,6 +1372,7 @@ mod tests {
                 enabled: true,
                 label: None,
                 transition_in,
+                transition_out: None,
                 audio_highpass_hz: None,
                 audio_lowpass_hz: None,
                 audio_delay_ms: None,
@@ -1323,5 +1424,29 @@ mod tests {
         let store = KeyframeStore::new();
         let plan = plan_frame(&project, &sequence_id, 1050.0, (640, 360), &store).unwrap();
         assert!(plan.transition.is_none());
+    }
+
+    /// 尾部淡出：末尾窗口内出计划、窗口外没有；进度从 0 渐到 1。
+    #[test]
+    fn plan_frame_reports_fade_out_at_tail() {
+        let (mut project, sequence_id) = project_with_two_clips(None);
+        // 给第二个片段（1000~2000ms）挂 200ms 黑场淡出
+        let track = &mut project.sequences[0].tracks[0];
+        track.clips[1].transition_out = Some(crate::timeline::model::Transition {
+            kind: "dipToBlack".into(),
+            duration_ms: 200.0,
+        });
+        let store = KeyframeStore::new();
+
+        // 窗口外（1500ms，淡出从 1800ms 开始）没有淡出计划
+        let outside = plan_frame(&project, &sequence_id, 1500.0, (640, 360), &store).unwrap();
+        assert!(outside.fade_out.is_none(), "窗口外不应有淡出");
+
+        // 1880ms 按 25fps 吸附后不变，落在 [1800, 2000] 窗口内偏早，进度 0.4
+        let mid = plan_frame(&project, &sequence_id, 1880.0, (640, 360), &store).unwrap();
+        let fade = mid.fade_out.as_ref().expect("尾巴窗口内应有淡出计划");
+        assert_eq!(fade.kind, "dipToBlack");
+        assert!((fade.progress - 0.4).abs() < 1e-4, "窗口内进度应 0.4，实际 {}", fade.progress);
+        assert!(fade.previous.is_none(), "淡出不需要前片段");
     }
 }

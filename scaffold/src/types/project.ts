@@ -152,6 +152,10 @@ export interface Clip {
   outMs: number;
   speed: number;
   reversed: boolean;
+  /** 曲线变速关键点；缺省 / 空 = 恒定 speed */
+  speedCurve?: SpeedKey[] | null;
+  /** 声音变调（剪映同款）：true = 变速时音高随速度变；false = 保调（默认） */
+  audioPitchShift?: boolean;
   /** 对应的图节点。这一条就是剪辑与特效融合的接口 */
   nodeId: Id;
   compoundId?: Id;
@@ -167,6 +171,8 @@ export interface Clip {
   label?: string;
   /** 入场转场：与前一片段衔接处的叠化，见 Rust `Transition` */
   transitionIn?: { kind: TransitionKind; durationMs: number } | null;
+  /** 出场淡出：片段末尾向黑/白渐隐（剪映「淡出」；不是效果栈里的一项） */
+  transitionOut?: { kind: TransitionKind; durationMs: number } | null;
   /** 音频淡入 / 淡出时长（毫秒），仅音频片段使用 */
   audioFadeInMs?: number | null;
   /** 高通/低通截止 Hz、回声 ms（混音时真滤波） */
@@ -187,6 +193,13 @@ export type TransitionKind =
   | "wipeRadial"
   | "wipeBlinds"
   | "zoomCross";
+
+/** 曲线变速关键点：片段内时刻 → 速度（剪映式折线，两点之间线性插值）。
+ *  tMs 相对片段起点（0 = 片段头）；端头之外保持端点值。 */
+export interface SpeedKey {
+  tMs: number;
+  speed: number;
+}
 
 // 从 ./graph 再导出，方便只引 project 的地方也能拿到图类型
 export * from "./graph";

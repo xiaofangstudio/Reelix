@@ -20,6 +20,7 @@ use crate::compositor::decode;
 use crate::history::record;
 use crate::project::serialize::new_id;
 use crate::state::{lock, AppState};
+use crate::commands::timeline::recompute_sequence_duration;
 use crate::timeline::model::{Clip, Track, TrackKind};
 
 const ASR_MISSING: &str =
@@ -392,6 +393,8 @@ pub fn apply_subtitles(
             out_ms: duration,
             speed: 1.0,
             reversed: false,
+            speed_curve: None,
+            audio_pitch_shift: false,
             node_id: String::new(),
             compound_id: None,
             enable_3d: false,
@@ -400,6 +403,7 @@ pub fn apply_subtitles(
             enabled: true,
             label: None,
             transition_in: None,
+            transition_out: None,
             audio_highpass_hz: None,
             audio_lowpass_hz: None,
             audio_delay_ms: None,
@@ -411,6 +415,7 @@ pub fn apply_subtitles(
     track
         .clips
         .sort_by(|a, b| a.start_ms.partial_cmp(&b.start_ms).unwrap_or(std::cmp::Ordering::Equal));
+    recompute_sequence_duration(sequence);
 
     record(&state, &format!("生成字幕（{count} 条）"), project)?;
     *lock(&state.project_dirty)? = true;
@@ -474,6 +479,8 @@ pub fn add_subtitle_clip(
         out_ms: duration,
         speed: 1.0,
         reversed: false,
+        speed_curve: None,
+        audio_pitch_shift: false,
         node_id: String::new(),
         compound_id: None,
         enable_3d: false,
@@ -486,6 +493,7 @@ pub fn add_subtitle_clip(
         enabled: true,
         label: None,
         transition_in: None,
+        transition_out: None,
         audio_highpass_hz: None,
         audio_lowpass_hz: None,
         audio_delay_ms: None,
@@ -502,6 +510,7 @@ pub fn add_subtitle_clip(
     track
         .clips
         .sort_by(|a, b| a.start_ms.partial_cmp(&b.start_ms).unwrap_or(std::cmp::Ordering::Equal));
+    recompute_sequence_duration(sequence);
 
     record(&state, "添加字幕", project)?;
     *lock(&state.project_dirty)? = true;
@@ -681,6 +690,8 @@ mod tests {
                     out_ms: 1000.0,
                     speed: 1.0,
                     reversed: false,
+                    speed_curve: None,
+                    audio_pitch_shift: false,
                     node_id: String::new(),
                     compound_id: None,
                     enable_3d: false,
@@ -689,6 +700,7 @@ mod tests {
                     enabled: true,
                     label: None,
                     transition_in: None,
+                    transition_out: None,
             audio_highpass_hz: None,
             audio_lowpass_hz: None,
             audio_delay_ms: None,
@@ -705,6 +717,8 @@ mod tests {
                     out_ms: 1000.0,
                     speed: 1.0,
                     reversed: false,
+                    speed_curve: None,
+                    audio_pitch_shift: false,
                     node_id: String::new(),
                     compound_id: None,
                     enable_3d: false,
@@ -713,6 +727,7 @@ mod tests {
                     enabled: true,
                     label: None,
                     transition_in: None,
+                    transition_out: None,
             audio_highpass_hz: None,
             audio_lowpass_hz: None,
             audio_delay_ms: None,

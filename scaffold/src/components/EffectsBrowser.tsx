@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAppStore, useSelectedClip } from "../store/appStore";
 import { effectsByCategory, findEffect } from "../core/effectCatalog";
+import { setClipTransition, setClipTransitionOut } from "../store/projectActions";
 import type { EffectParamValue, EffectType } from "../types/effect";
 
 /** 可加到图层上的效果，按分类摊平 */
@@ -26,6 +27,12 @@ const EFFECT_GROUPS = effectsByCategory()
 
 /** 与 EffectStack 共用同一份本地预设 */
 const PRESET_KEY = "reelix:fx-presets";
+
+/**
+ * 常用效果（新手不用翻分类）：剪辑里最高频的六个。
+ * 来源与全量清单同一份 catalog，不存在第二套效果表。
+ */
+const QUICK_EFFECTS: EffectType[] = ["blur", "grade", "glow", "transform", "opacity", "posterize"];
 
 type ParamPreset = Record<string, EffectParamValue>;
 
@@ -65,7 +72,6 @@ export function EffectsBrowser({ onOpenSpatial }: EffectsBrowserProps) {
   const clip = useSelectedClip();
   const addEffect = useAppStore((s) => s.addEffect);
   const setEffectParam = useAppStore((s) => s.setEffectParam);
-  const addFade = useAppStore((s) => s.addFade);
   const setClip3DEnabled = useAppStore((s) => s.setClip3DEnabled);
   const [tab, setTab] = useState<BrowserTab>("effects");
   const [keyword, setKeyword] = useState("");
@@ -160,6 +166,31 @@ export function EffectsBrowser({ onOpenSpatial }: EffectsBrowserProps) {
 
         {tab === "effects" && (
           <>
+            {/* 常用效果：先给六个高频的，剩下的按分类找 */}
+            {keyword.trim() === "" && (
+              <div className="fx-quick">
+                <div className="fx-quick-title">常用</div>
+                <div className="fx-quick-row">
+                  {QUICK_EFFECTS.map((type) => {
+                    const opt = findEffect(type);
+                    if (!opt || !opt.addable) return null;
+                    return (
+                      <button
+                        key={type}
+                        type="button"
+                        className={`fx-quick-item${picked === type ? " selected" : ""}`}
+                        disabled={!clip}
+                        title={clip ? `双击加到「${clip.id}」这个图层` : "先在时间线上选中片段"}
+                        onClick={() => setPicked(type)}
+                        onDoubleClick={() => apply(type)}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {groups.length === 0 && <div className="fx-browser-hint">没有匹配的效果</div>}
             {groups.map((group) => {
               const open = keyword.trim() !== "" || openCategories.has(group.category);
@@ -223,23 +254,32 @@ export function EffectsBrowser({ onOpenSpatial }: EffectsBrowserProps) {
         {tab === "transitions" && (
           <>
             <div className="fx-browser-hint">
-              转场是片段自己的出入场过渡，时长按片段长度自动取一半（最多 0.5 秒）
+              淡入 / 淡出是片段自己的出入场过渡（剪映同款）：挂在片段属性上，
+              不是效果栈里的一项。更多转场类型在右侧属性「转场」里调。
             </div>
             <button
               type="button"
               className="fx-browser-item"
               disabled={!clip}
-              onClick={() => clip && addFade(clip.id, "in")}
+              title="片段开头从黑场渐入（500ms，可在属性里改时长）"
+              onClick={() => {
+                if (!clip) return;
+                void setClipTransition(clip.id, "dipToBlack", Math.min(500, clip.durationMs / 2));
+              }}
             >
-              淡入
+              淡入（黑场渐入）
             </button>
             <button
               type="button"
               className="fx-browser-item"
               disabled={!clip}
-              onClick={() => clip && addFade(clip.id, "out")}
+              title="片段末尾向黑场渐隐（500ms，可在属性里改时长）"
+              onClick={() => {
+                if (!clip) return;
+                void setClipTransitionOut(clip.id, "dipToBlack", Math.min(500, clip.durationMs / 2));
+              }}
             >
-              淡出
+              淡出（黑场渐隐）
             </button>
           </>
         )}

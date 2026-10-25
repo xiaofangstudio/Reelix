@@ -22,6 +22,8 @@ import { MenuBar, runMenuCommand } from "./components/MenuBar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ImmersiveMode } from "./components/ImmersiveMode";
 import { GroupWizard } from "./components/GroupWizard";
+import { SettingsPanel } from "./components/SettingsPanel";
+import { TutorialPanel } from "./components/TutorialPanel";
 import { IconPageMedia, IconPageEdit, IconPageFx, IconPageDeliver } from "./components/icons";
 import { ToolBar } from "./components/ToolBar";
 import { FxShell } from "./components/fx/FxShell";
@@ -35,6 +37,9 @@ import { RecordingPanel } from "./components/RecordingPanel";
 import { StartScreen } from "./components/StartScreen";
 import { useAppStore } from "./store/appStore";
 import { importDropbox } from "./services/interop";
+import { getSettings } from "./services/settings";
+import { project as projectApi } from "./services";
+import { projectIsDirty } from "./services/project";
 import type { PageTab, ToolKind } from "./store/appStore";
 import {
   bootstrapProject,
@@ -91,6 +96,14 @@ export function App() {
   const selectedCount = useAppStore((s) => s.selectedClipIds.length);
   // 时间线高度可拖（用户要求窗口能自由缩放，别绷死）
   const [lowerH, setLowerH] = useState(360);
+  /** 偏好设置面板（模态）：主题 / 预览性能 / 自动保存 / 缓存。
+   *  开关在 store 里——顶栏按钮、编辑菜单、Ctrl+, 三处都能开 */
+  const settingsOpen = useAppStore((s) => s.settingsOpen);
+  const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
+  /** 内置入门教程（模态）：开场界面与「帮助 ▸ 内置教程」共用，
+   *  完全离线，不再依赖已经不通的官网 */
+  const tutorialOpen = useAppStore((s) => s.tutorialOpen);
+  const setTutorialOpen = useAppStore((s) => s.setTutorialOpen);
 
 
 
@@ -105,6 +118,51 @@ export function App() {
   // 启动时问一次后端：已经打开工程就回填，否则进入「未打开」引导态
   useEffect(() => {
     void bootstrapProject();
+    // 后端设置里的主题优先：刷新 / 重启后保持用户选的主题
+    void (async () => {
+      try {
+        const s = await getSettings();
+        useAppStore.getState().setTheme(s.theme === "dark" ? "dark" : "light");
+      } catch {
+        /* 设置读不到就用默认浅色，不阻塞启动 */
+      }
+    })();
+  }, []);
+
+  /**
+   * 自动保存（偏好设置里可调间隔 / 关闭）。
+   * 两条底线：工程落过盘（有路径）才写——从没保存过的不弹框打扰，
+   * 让用户先手动存一次；有未保存改动才写——没改动不反复刷盘。
+   * 每 ticks 重新读一次间隔：在偏好设置里改了，下一班就生效。
+   */
+  useEffect(() => {
+    let timer = 0;
+    const schedule = async () => {
+      let interval = 0;
+      try {
+        interval = (await getSettings()).autoSaveIntervalMs;
+      } catch {
+        interval = 0;
+      }
+      if (interval <= 0) return; // 设成「关闭」：不排下一班
+      timer = window.setTimeout(async () => {
+        const st = useAppStore.getState();
+        if (st.project) {
+          try {
+            const [path, dirty] = await Promise.all([
+              projectApi.getProjectPath(),
+              projectIsDirty(),
+            ]);
+            if (path && dirty) await projectApi.saveProject(path);
+          } catch {
+            /* 自动保存失败不弹窗：下一班再试，手动 Ctrl+S 会给明确错误 */
+          }
+        }
+        void schedule();
+      }, interval);
+    };
+    void schedule();
+    return () => window.clearTimeout(timer);
   }, []);
 
   // Strata 联动：每 3 秒扫一次投递箱（Strata 把改好的 PNG 写进来），
@@ -246,6 +304,12 @@ export function App() {
           void state.pasteClips();
           return;
         }
+        if (key === ",") {
+          // Ctrl+, = 偏好设置（PR / AE 同款快捷键）
+          e.preventDefault();
+          state.setSettingsOpen(true);
+          return;
+        }
       }
       const TOOL_CYCLES: Record<string, ToolKind[]> = {
         v: ["selection", "trackSelectForward", "trackSelectBackward"],
@@ -340,6 +404,8 @@ export function App() {
     <>
       <ImmersiveMode />
       {groupWizard && <GroupWizard onClose={() => setGroupWizard(false)} />}
+      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+      {tutorialOpen && <TutorialPanel onClose={() => setTutorialOpen(false)} />}
       {showEditor ? (
         <div className="app-pages">
           {/* 唯一顶栏：菜单随页面切换（剪辑页 FC 参考 九菜单 / 特效页 EC 参考 九菜单），
@@ -535,9 +601,8 @@ export function App() {
                   <div className="lower" style={{ height: lowerH }}>
                     {/* 工具栏移到时间线顶部横排（用户要求：更常用） */}
                     <ToolBar />
-                    {/* 曲线不再单独占一格：选中片段打了关键帧后，
-                        曲线行在时间线轨道下方就地展开（点片段右上角的菱形，
-                        或右键「显示关键帧曲线」） */}
+                    {/* 调色不走底部 Tab（用户否决）：调色在右上属性面板的
+                        「调节」页里（属性面板顶部小页签切换，剪映式布局） */}
                     <TimelineView />
                   </div>
                   </div>

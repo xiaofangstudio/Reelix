@@ -1,43 +1,43 @@
 /* ============================================================
    Reelix 设计令牌 —— 配色唯一来源
    ------------------------------------------------------------
-   主题：纯白 + 浅灰 + 鲜亮蓝（用户 2026-10-22 定稿）：
-   - 亮色：底 #ffffff 纯白，面板 #f7f8fa 浅灰（去掉了原来的青黄假白）
-   - 强调色：鲜亮蓝 #2f7df6（替换原绿色系）
-   - 点缀：浅黄 #ffd94d / 浅蓝 #6db3ff（高饱和，用于标记/转场/点缀）
-   - 暗色：深蓝灰 #12151c 起（不再死黑），accent 提亮 #5b9bff
+   主题：雾林绿 + 近白 + 浅灰（用户定稿，蓝色系全部退役）：
+   - 亮色：底 #fbfbfc 近白，面板 #f7faf8 浅灰绿
+   - 强调色：雾林绿（品牌/选中/播放头统一走绿色系）
+   - 点缀：浅黄 #ffd94d / 浅青 #4fd1e0（高饱和，只用于标记/转场/点缀）
+   - 暗色：深绿灰 #141614 起（不再死黑），accent 提亮 #6fd3a2
    ============================================================ */
 
 :root,
 [data-theme="light"] {
-  /* 底层：近白（微灰，字幕/白字可读）+ 浅灰 */
-  --rl-bg: #fbfbfc;
-  --rl-surface: #f7f8fa;
-  --rl-surface-2: #eef0f4;
-  --rl-surface-3: #e2e5eb;
-  --rl-border: #d7dae1;
-  --rl-border-strong: #b8bdc8;
+  /* 底层：近白（微绿，字幕/白字可读）+ 浅灰绿 */
+  --rl-bg: #fbfcfb;
+  --rl-surface: #f7faf8;
+  --rl-surface-2: #eef4f0;
+  --rl-surface-3: #e2ece6;
+  --rl-border: #d7e2dc;
+  --rl-border-strong: #b5c8be;
 
   /* 文字 */
   --rl-text: #101418;
-  --rl-text-dim: #5b6472;
-  --rl-text-mute: #8a94a3;
+  --rl-text-dim: #5b6b64;
+  --rl-text-mute: #8a9a93;
   --rl-text-invert: #ffffff;
 
-  /* 品牌与强调：鲜亮蓝 */
-  --rl-brand: #2f7df6;
-  --rl-accent: #2f7df6;
-  --rl-accent-fill: #2f7df6;
-  --rl-accent-ink: #ffffff;
-  --rl-accent-soft: rgba(47, 125, 246, 0.10);
-  --rl-accent-line: rgba(47, 125, 246, 0.38);
-  --rl-accent-hover: #1c6ae0;
+  /* 品牌与强调：雾林绿 */
+  --rl-brand: #2e9e6b;
+  --rl-accent: #26734f;
+  --rl-accent-fill: #57c08f;
+  --rl-accent-ink: #08221a;
+  --rl-accent-soft: rgba(87, 192, 143, 0.14);
+  --rl-accent-line: rgba(38, 115, 79, 0.35);
+  --rl-accent-hover: #1f6141;
 
-  /* 高饱和点缀（用户要点：浅蓝、浅黄） */
+  /* 点睛色（用户定）：浅青/黄/红只用于一眼区分类型——轨道种类、面板识别，不作主色 */
   --rl-tint-yellow: #ffd94d;
   --rl-tint-yellow-soft: rgba(255, 217, 77, 0.22);
-  --rl-tint-blue: #6db3ff;
-  --rl-tint-blue-soft: rgba(109, 179, 255, 0.22);
+  --rl-tint-blue: #4fb8a0;
+  --rl-tint-blue-soft: rgba(79, 184, 160, 0.22);
   --rl-tint-cyan: #4fd1e0;
 
   /* 状态 */
@@ -45,32 +45,32 @@
   --rl-warning: #d9930d;
   --rl-danger: #e0453a;
 
-  /* 时间线 */
-  --rl-tl-bg: #f2f3f6;
-  --rl-tl-ruler: #e9ebf0;
-  --rl-tl-gutter: #f4f5f8;
-  --rl-tl-grid: #dde0e7;
-  --rl-clip-video: #d6e4ff;
-  --rl-clip-video-line: #8fb6f0;
-  --rl-clip-audio: #d8eef0;
-  --rl-clip-audio-line: #7cc4cc;
-  --rl-clip-title: #fff3d1;
-  --rl-clip-title-line: #e8cf6a;
-  --rl-playhead: #2f7df6;
-  --rl-kf: #2f7df6;
+  /* 时间线（绿灰，不再是蓝灰） */
+  --rl-tl-bg: #f1f4f1;
+  --rl-tl-ruler: #e9ede9;
+  --rl-tl-gutter: #f3f5f3;
+  --rl-tl-grid: #dde2dd;
+  --rl-clip-video: #dfeae4;
+  --rl-clip-video-line: #a9c4b6;
+  --rl-clip-audio: #cfe8da;
+  --rl-clip-audio-line: #8fc0a6;
+  --rl-clip-title: #e9f3ec;
+  --rl-clip-title-line: #a9c4b6;
+  --rl-playhead: #26734f;
+  --rl-kf: #26734f;
 
   /* 节点视图遗留令牌：仍被时间线/监视器复用 */
   --rl-node-bg: #ffffff;
-  --rl-node-head: #f2f3f6;
-  --rl-node-border: #d2d6de;
-  --rl-node-selected: #2f7df6;
-  --rl-wire: #a6aeba;
-  --rl-wire-active: #2f7df6;
-  --rl-ng-grid: #f4f5f8;
+  --rl-node-head: #f2f4f2;
+  --rl-node-border: #d2d8d4;
+  --rl-node-selected: #26734f;
+  --rl-wire: #a6b8ae;
+  --rl-wire-active: #26734f;
+  --rl-ng-grid: #f4f5f3;
 
   /* 监视器画面区 */
-  --rl-monitor-stage: #e2e5eb;
-  --rl-monitor-frame: #0d1117;
+  --rl-monitor-stage: #e2e6e2;
+  --rl-monitor-frame: #0d1210;
 
   /* 摄像机/空对象轨道（用户：空对象红、摄像机黄） */
   --rl-tl-camera: #fff3d1;
@@ -123,60 +123,60 @@
   --rl-focus-ring: 0 0 0 2px var(--rl-bg), 0 0 0 4px var(--rl-accent-line);
 }
 
-/* 暗色：深蓝灰（不死黑），accent 提亮 */
+/* 暗色：深绿灰（不死黑），accent 提亮 */
 [data-theme="dark"] {
-  --rl-bg: #12151c;
-  --rl-surface: #1a1e27;
-  --rl-surface-2: #232936;
-  --rl-surface-3: #2d3444;
-  --rl-border: #37404f;
-  --rl-border-strong: #4a5468;
+  --rl-bg: #141614;
+  --rl-surface: #1b1f1c;
+  --rl-surface-2: #242926;
+  --rl-surface-3: #2d332f;
+  --rl-border: #37403a;
+  --rl-border-strong: #4a554d;
 
   --rl-text: #eef1f6;
-  --rl-text-dim: #a6b0c0;
-  --rl-text-mute: #75808f;
+  --rl-text-dim: #a6b5ad;
+  --rl-text-mute: #75857c;
   --rl-text-invert: #0b0e14;
 
-  --rl-brand: #6db3ff;
-  --rl-accent: #5b9bff;
-  --rl-accent-fill: #2f7df6;
-  --rl-accent-ink: #ffffff;
-  --rl-accent-soft: rgba(91, 155, 255, 0.16);
-  --rl-accent-line: rgba(91, 155, 255, 0.45);
-  --rl-accent-hover: #7cb0ff;
+  --rl-brand: #6fd3a2;
+  --rl-accent: #6fd3a2;
+  --rl-accent-fill: #57c08f;
+  --rl-accent-ink: #06120e;
+  --rl-accent-soft: rgba(111, 211, 162, 0.16);
+  --rl-accent-line: rgba(111, 211, 162, 0.42);
+  --rl-accent-hover: #8fe0b8;
 
   --rl-tint-yellow: #ffd94d;
   --rl-tint-yellow-soft: rgba(255, 217, 77, 0.18);
-  --rl-tint-blue: #7cc0ff;
-  --rl-tint-blue-soft: rgba(124, 192, 255, 0.18);
+  --rl-tint-blue: #5cc9ae;
+  --rl-tint-blue-soft: rgba(92, 201, 174, 0.18);
   --rl-tint-cyan: #4fd1e0;
 
   --rl-success: #3fbb6e;
   --rl-warning: #e8b13a;
   --rl-danger: #ff6b5e;
 
-  --rl-tl-bg: #161a23;
-  --rl-tl-ruler: #1e232e;
-  --rl-tl-gutter: #191d26;
-  --rl-tl-grid: #2a3140;
-  --rl-clip-video: #1e3a5f;
-  --rl-clip-video-line: #3d6ea8;
-  --rl-clip-audio: #17393d;
-  --rl-clip-audio-line: #2f6b73;
-  --rl-clip-title: #4a3d1c;
-  --rl-clip-title-line: #a8894a;
-  --rl-playhead: #5b9bff;
-  --rl-kf: #5b9bff;
+  --rl-tl-bg: #171a18;
+  --rl-tl-ruler: #1f2421;
+  --rl-tl-gutter: #1a1e1b;
+  --rl-tl-grid: #2a332c;
+  --rl-clip-video: #2a3a33;
+  --rl-clip-video-line: #3f5a4d;
+  --rl-clip-audio: #22372e;
+  --rl-clip-audio-line: #3a5c4a;
+  --rl-clip-title: #2a3a33;
+  --rl-clip-title-line: #3f5a4d;
+  --rl-playhead: #6fd3a2;
+  --rl-kf: #6fd3a2;
 
-  --rl-node-bg: #1e232e;
-  --rl-node-head: #232936;
-  --rl-node-border: #333b4b;
-  --rl-node-selected: #5b9bff;
-  --rl-wire: #4a5468;
-  --rl-wire-active: #5b9bff;
-  --rl-ng-grid: #161a23;
+  --rl-node-bg: #1f2421;
+  --rl-node-head: #242926;
+  --rl-node-border: #353f38;
+  --rl-node-selected: #6fd3a2;
+  --rl-wire: #4a554c;
+  --rl-wire-active: #6fd3a2;
+  --rl-ng-grid: #161a18;
 
-  --rl-monitor-stage: #0d1016;
+  --rl-monitor-stage: #0d1210;
   --rl-monitor-frame: #000000;
   --rl-tl-camera: #3d3520;
   --rl-tl-camera-line: #8a7a3a;

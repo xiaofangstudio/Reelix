@@ -6,7 +6,13 @@
  *
  * 工程里**不放二进制素材**（体积）：视频位用两个「生成」效果节点当画面源
  * （渐变 + 网格 + 圆），字幕走字幕轨的真文字，音频位故意留空（用户自己拖歌），
- * 这样 8KB 的 json 就能演示全链路。
+ * 这样几 KB 的 json 就能演示全链路。
+ *
+ * 字段名是前后端契约，一个都不能错（踩过的坑，改前先读一遍）：
+ * - 图节点类型字段叫 `type`，不是 `nodeType`（Rust 侧 rename）
+ * - 插槽的叫 `connected`，不是 `multiple`
+ * - 片段的 3D 开关叫 `enable3D` / `transform3D`，D 大写
+ * - 序列必须给 `colorSpace`，标记只有 `{ id, timeMs, name }`
  *
  * 生成方式：在内存里拼 Project → 走 save_project 落盘到用户的文档目录 →
  * 再 open_project 打开。真实文件、真实工程，之后用户还能接着改。
@@ -33,10 +39,15 @@ function buildSampleProject(): Record<string, unknown> {
 
   // 根效果图：节点链演示「生成 → 风格化 → 输出」
   const gGradient = id("node");
-  const gCircle = id("node");
   const gGrid = id("node");
+  const gCircle = id("node");
   const gPoster = id("node");
-  const gText = id("node");
+  const gOutput = id("node");
+
+  /** 滤镜节点的标准输入插槽（契约：connected，不是 multiple）。 */
+  const inPlug = { key: "in", label: "输入", dataType: "image", connected: false };
+  /** 滤镜节点的标准输出插槽。 */
+  const outPlug = { key: "out", label: "输出", dataType: "image", connected: false };
 
   return {
     id: id("proj"),
@@ -51,11 +62,12 @@ function buildSampleProject(): Record<string, unknown> {
         width: 1920,
         height: 1080,
         frameRate: 30,
+        // 必填：后端 Sequence.color_space 没有 serde default，缺了直接打不开
+        colorSpace: "Rec.709",
         durationMs: 30_000,
-        backgroundColor: "#101418",
         rootGraphId: seqGraphId,
         tracks: [
-          // V3（最顶）：文字标题层
+          // V3（最顶）：文字标题层（文字走 clip.text，监视器直接叠字）
           {
             id: v3,
             kind: "subtitle",
@@ -78,10 +90,10 @@ function buildSampleProject(): Record<string, unknown> {
                 outMs: 4000,
                 speed: 1,
                 reversed: false,
-                nodeId: gText,
+                nodeId: "",
                 compoundId: null,
-                enable3d: false,
-                transform3d: null,
+                enable3D: false,
+                transform3D: null,
                 transitionIn: null,
                 enabled: true,
               },
@@ -112,8 +124,8 @@ function buildSampleProject(): Record<string, unknown> {
                 reversed: false,
                 nodeId: gCircle,
                 compoundId: null,
-                enable3d: true,
-                transform3d: {
+                enable3D: true,
+                transform3D: {
                   position: { x: 120, y: 40, z: 200 },
                   rotation: { x: 0, y: 0, z: 15 },
                   scale: 0.8,
@@ -152,8 +164,8 @@ function buildSampleProject(): Record<string, unknown> {
                 reversed: false,
                 nodeId: gGradient,
                 compoundId: null,
-                enable3d: false,
-                transform3d: null,
+                enable3D: false,
+                transform3D: null,
                 transitionIn: null,
                 enabled: true,
               },
@@ -196,8 +208,8 @@ function buildSampleProject(): Record<string, unknown> {
                 reversed: false,
                 nodeId: "",
                 compoundId: null,
-                enable3d: false,
-                transform3d: null,
+                enable3D: false,
+                transform3D: null,
                 transitionIn: { kind: "dipToBlack", durationMs: 400 },
                 enabled: true,
               },
@@ -216,10 +228,11 @@ function buildSampleProject(): Record<string, unknown> {
             clips: [],
           },
         ],
+        // 标记契约只有 { id, timeMs, name }——没有 color/comment，写了也被后端丢掉
         markers: [
-          { id: id("mk"), timeMs: 0, color: "blue", comment: "开场：渐变入场" },
-          { id: id("mk"), timeMs: 11_000, color: "yellow", comment: "中段：字幕切入" },
-          { id: id("mk"), timeMs: 22_000, color: "red", comment: "收尾：准备导出" },
+          { id: id("mk"), timeMs: 0, name: "开场：渐变入场" },
+          { id: id("mk"), timeMs: 11_000, name: "中段：字幕切入" },
+          { id: id("mk"), timeMs: 22_000, name: "收尾：准备导出" },
         ],
       },
     ],
@@ -227,31 +240,38 @@ function buildSampleProject(): Record<string, unknown> {
       [seqGraphId]: {
         id: seqGraphId,
         nodes: [
-          { id: gGradient, nodeType: "gradient", name: "渐变", x: 0, y: 0,
-            params: { colorA: "#1b2a4a", colorB: "#e8734a", angle: 35 },
-            inputs: [{ key: "in", label: "输入", dataType: "image", multiple: false }],
-            outputs: [{ key: "out", label: "输出", dataType: "image", multiple: true }],
+          { id: gGradient, type: "gradient", name: "渐变", x: 0, y: 0,
+            params: { colorA: "#0f2b22", colorB: "#9fd4b6", angle: 35 },
+            inputs: [{ ...inPlug }],
+            outputs: [{ ...outPlug, connected: true }],
             bypassed: false, collapsed: false, animated: false },
-          { id: gGrid, nodeType: "grid", name: "网格", x: 0, y: 0,
-            params: { spacing: 120, lineWidth: 2, color: "#6db3ff" },
-            inputs: [{ key: "in", label: "输入", dataType: "image", multiple: false }],
-            outputs: [{ key: "out", label: "输出", dataType: "image", multiple: true }],
+          { id: gGrid, type: "grid", name: "网格", x: 0, y: 0,
+            params: { spacing: 120, lineWidth: 2, color: "#8fc4a8" },
+            inputs: [{ ...inPlug, connected: true }],
+            outputs: [{ ...outPlug, connected: true }],
             bypassed: false, collapsed: false, animated: false },
-          { id: gCircle, nodeType: "circle", name: "圆", x: 0, y: 0,
+          { id: gCircle, type: "circle", name: "圆", x: 0, y: 0,
             params: { centerX: 0.5, centerY: 0.45, radius: 28, color: "#ffd94d", feather: 12 },
-            inputs: [{ key: "in", label: "输入", dataType: "image", multiple: false }],
-            outputs: [{ key: "out", label: "输出", dataType: "image", multiple: true }],
+            inputs: [{ ...inPlug, connected: true }],
+            outputs: [{ ...outPlug, connected: true }],
             bypassed: false, collapsed: false, animated: false },
-          { id: gPoster, nodeType: "posterize", name: "色调分离", x: 0, y: 0,
+          { id: gPoster, type: "posterize", name: "色调分离", x: 0, y: 0,
             params: { levels: 8 },
-            inputs: [{ key: "in", label: "输入", dataType: "image", multiple: false }],
-            outputs: [{ key: "out", label: "输出", dataType: "image", multiple: true }],
+            inputs: [{ ...inPlug, connected: true }],
+            outputs: [{ ...outPlug, connected: true }],
+            bypassed: false, collapsed: false, animated: false },
+          // 输出节点：链的终点。合成器优先认它，没它则退化成「拓扑序最后一个」
+          { id: gOutput, type: "output", name: "输出", x: 0, y: 0,
+            params: {},
+            inputs: [{ ...inPlug, connected: true }],
+            outputs: [],
             bypassed: false, collapsed: false, animated: false },
         ],
         connections: [
           { id: id("conn"), fromNode: gGradient, fromPlug: "out", toNode: gGrid, toPlug: "in" },
           { id: id("conn"), fromNode: gGrid, fromPlug: "out", toNode: gCircle, toPlug: "in" },
           { id: id("conn"), fromNode: gCircle, fromPlug: "out", toNode: gPoster, toPlug: "in" },
+          { id: id("conn"), fromNode: gPoster, fromPlug: "out", toNode: gOutput, toPlug: "in" },
         ],
       },
     },

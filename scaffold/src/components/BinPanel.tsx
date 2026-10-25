@@ -104,7 +104,6 @@ export function BinPanel() {
   const setPreviewAsset = useAppStore((s) => s.setPreviewAsset);
   const previewAssetId = useAppStore((s) => s.previewAssetId);
   const setPickedAsset = useAppStore((s) => s.setPickedAsset);
-  const selectedCount = useAppStore((s) => s.selectedClipIds.length);
   const addEffect = useAppStore((s) => s.addEffect);
 
   const handleImport = async () => {
@@ -199,9 +198,7 @@ export function BinPanel() {
           hasProject={hasProject}
         />
       )}
-      {tab === "text" && (
-        <TextTab keyword={keyword} selectedCount={selectedCount} onApply={addEffect} />
-      )}
+      {tab === "text" && <TextTab keyword={keyword} />}
       {tab === "generators" && <GeneratorsTab keyword={keyword} hasProject={hasProject} />}
       {tab === "camera" && <CameraTab />}
       {tab === "effects" && <EffectsTab keyword={keyword} />}
@@ -699,36 +696,39 @@ function BinRow({
 /** 文字预设面板：点击真给选中片段挂文字效果 */
 export function TextTab({
   keyword,
-  selectedCount,
-  onApply,
 }: {
   keyword: string;
-  selectedCount: number;
-  onApply: (clipId: string, type: "text") => void;
 }) {
-  const selectedClipId = useAppStore((s) => s.selectedClipId);
   const list = useMemo(() => {
     const key = keyword.trim().toLowerCase();
     if (!key) return TEXT_PRESETS;
     return TEXT_PRESETS.filter((p) => p.name.toLowerCase().includes(key));
   }, [keyword]);
 
+  /**
+   * 点文字预设 = 在播放头处加一条字幕片段，独占字幕轨（剪映语义）。
+   * 老行为是「把文字效果挂到选中片段上」——用户原话：拖动一个字为什么
+   * 给整条视频加效果？文字明明是独立的一层。
+   */
+  const addText = async (text: string) => {
+    try {
+      const { addTextAtPlayhead } = await import("../store/projectActions");
+      await addTextAtPlayhead({ text });
+    } catch (err) {
+      useAppStore.getState().pushNotice("error", err instanceof Error ? err.message : String(err));
+    }
+  };
+
   return (
     <div className="panel-body">
-      {selectedCount === 0 && (
-        <div className="tl-empty">先在时间线上选中一个片段，再点文字预设套用</div>
-      )}
+      <div className="tl-empty">点一下就在播放头处加一条字幕，独占字幕轨，右侧属性里改文字</div>
       {list.map((preset) => (
         <button
           key={preset.id}
           type="button"
           className="text-preset"
-          disabled={!selectedClipId}
-          title={`套用到选中片段：${preset.name}`}
-          onClick={() => {
-            if (!selectedClipId) return;
-            onApply(selectedClipId, "text");
-          }}
+          title={`在播放头处加一条字幕：${preset.name}`}
+          onClick={() => void addText(preset.sample)}
         >
           {/* 灰底白字，统一写「小方工作室」，不同字体预览（用户要求） */}
           <span

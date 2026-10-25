@@ -54,17 +54,39 @@ pub fn locate_ffmpeg() -> Option<PathBuf> {
 /// 比放到后面（逐帧解码到目标点）快一个数量级。预览允许画质与绝对精确帧让位，
 /// 导出时才需要逐帧精确（走另一条管线）。
 /// `scale + pad` 保证输出严格是目标画幅：等比缩放进画面内，四周补黑，不拉伸变形。
+/// 静态图片扩展名。这类素材没有时间轴可言。
+fn is_still_image(input: &Path) -> bool {
+    input
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| {
+            matches!(
+                e.to_ascii_lowercase().as_str(),
+                "jpg" | "jpeg" | "png" | "bmp" | "webp" | "gif" | "tif" | "tiff"
+            )
+        })
+        .unwrap_or(false)
+}
+
 pub fn decode_args(input: &Path, at_ms: f64, width: usize, height: usize) -> Vec<String> {
     let seconds = (at_ms.max(0.0)) / 1000.0;
     let filter = format!(
         "scale={width}:{height}:force_original_aspect_ratio=decrease,\
          pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
     );
-    vec![
-        "-v".into(),
-        "error".into(),
-        "-ss".into(),
-        format!("{seconds:.3}"),
+
+    // 静态图片不能带 -ss：图片就一帧、时长近乎为零，seek 到 0.5 秒这种位置
+    // 等于 seek 到内容之外，ffmpeg 一帧都不吐，整帧就变成「取不到画面」。
+    // 这是照片一上轨道就黑屏的根因（端到端拿真实壁纸照出来的），
+    // 所以这里按扩展名认出静态图，直接跳过 seek——图片永远那一张，也不需要 seek。
+    let still = is_still_image(input);
+
+    let mut args: Vec<String> = vec!["-v".into(), "error".into()];
+    if !still {
+        args.push("-ss".into());
+        args.push(format!("{seconds:.3}"));
+    }
+    args.extend([
         "-i".into(),
         input.to_string_lossy().into_owned(),
         "-frames:v".into(),
@@ -76,7 +98,8 @@ pub fn decode_args(input: &Path, at_ms: f64, width: usize, height: usize) -> Vec
         "-pix_fmt".into(),
         "rgba".into(),
         "-".into(),
-    ]
+    ]);
+    args
 }
 
 /// 解一帧，返回浮点 RGBA 帧。
@@ -218,5 +241,27 @@ mod tests {
         let a = args("C:/片子.mp4", -500.0, 64, 64);
         let ss = a.iter().position(|s| s == "-ss").unwrap();
         assert_eq!(a[ss + 1], "0.000");
+    }
+
+    /// 静态图片绝不能带 -ss：图片没时间轴，seek 到内容之外会一帧都不吐，
+    /// 照片上轨直接黑屏。这是端到端用真实壁纸照出来的 bug，锁死它。
+    #[test]
+    fn still_images_skip_seek() {
+        for name in ["C:/图/壁纸.jpg", "C:/图/照片.JPEG", "C:/图/底.png", "C:/图/a.webp"] {
+            let a = args(name, 2500.0, 64, 64);
+            assert!(
+                !a.iter().any(|s| s == "-ss"),
+                "{name} 是静态图片，不应带 -ss（会 seek 到内容之外导致取不到画面）"
+            );
+            assert!(a.iter().any(|s| s == "-i"), "{name} 仍要正常输入图片");
+        }
+    }
+
+    /// 视频照旧按时点 seek，别被上一条误伤。
+    #[test]
+    fn videos_still_seek_by_time() {
+        let a = args("C:/片子/a.mp4", 2500.0, 64, 64);
+        let ss = a.iter().position(|s| s == "-ss").expect("视频必须带 -ss");
+        assert_eq!(a[ss + 1], "2.500");
     }
 }

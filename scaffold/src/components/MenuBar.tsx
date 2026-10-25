@@ -14,6 +14,7 @@ export function MenuBar({ menus }: { menus: MenuItem[] }) {
   const barRef = useRef<HTMLDivElement | null>(null);
   const theme = useAppStore((s) => s.theme);
   const setTheme = useAppStore((s) => s.setTheme);
+  const setSettingsOpen = useAppStore((s) => s.setSettingsOpen);
   const setPage = useAppStore((s) => s.setPage);
   const exportJob = useAppStore((s) => s.exportJob);
   const exportPercent =
@@ -76,6 +77,14 @@ export function MenuBar({ menus }: { menus: MenuItem[] }) {
         title={theme === "dark" ? "切换为浅色主题" : "切换为深色主题"}
       >
         {theme === "dark" ? <IconSun /> : <IconMoon />}
+      </button>
+      <button
+        type="button"
+        className="menubar-btn menubar-settings"
+        onClick={() => setSettingsOpen(true)}
+        title="偏好设置：主题 / 预览性能 / 自动保存 / 缓存（Ctrl+,）"
+      >
+        设置
       </button>
       <button
         type="button"

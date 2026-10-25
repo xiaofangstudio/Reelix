@@ -43,6 +43,7 @@ import {
   setClipEnabled,
   setClipLabel,
   setClipTransition,
+  setClipTransitionOut,
   unlinkCompound,
   trimClipTo,
   updateTrackFlags,
@@ -117,7 +118,7 @@ function buildVideoRows(tracks: Track[]): TrackRow[] {
   }
   const indices = Array.from(
     new Set(tracks.filter((t) => t.kind === "video" || t.kind === "subtitle").map((t) => t.index))
-  ).sort((a, b) => b - a);
+  ).sort((a, b) => a - b);
   indices.forEach((index, i) => {
     const group = tracks.filter(
       (t) => (t.kind === "video" || t.kind === "subtitle") && t.index === index
@@ -138,7 +139,7 @@ function buildVideoRows(tracks: Track[]): TrackRow[] {
 function buildAudioRows(tracks: Track[]): TrackRow[] {
   const indices = Array.from(
     new Set(tracks.filter((t) => t.kind === "audio").map((t) => t.index))
-  ).sort((a, b) => b - a);
+  ).sort((a, b) => a - b);
   return indices.map((index, i) => {
     const group = tracks.filter((t) => t.kind === "audio" && t.index === index);
     return { key: `a-${index}`, alt: i % 2 === 1, tracks: group };
@@ -558,7 +559,7 @@ function CurveLane({ clip, pxPerMs }: { clip: Clip; pxPerMs: number }) {
               />
             );
           })}
-          {/* BLURRR 式区间：两关键帧之间的蓝色半透明带，右键选缓动预设 */}
+          {/* BLURRR 式区间：两关键帧之间的绿色半透明带，右键选缓动预设 */}
           {Array.from(byEffect.entries()).map(([effectId, list]) => {
             const sorted = list.slice().sort((a, b) => a.timeMs - b.timeMs);
             return sorted.slice(0, -1).map((k, i) => {
@@ -573,8 +574,8 @@ function CurveLane({ clip, pxPerMs }: { clip: Clip; pxPerMs: number }) {
                     y={2}
                     width={w}
                     height={CURVE_ROW_H - 4}
-                    fill="rgba(47, 125, 246, 0.16)"
-                    stroke="rgba(47, 125, 246, 0.35)"
+                    fill="rgba(87, 192, 143, 0.16)"
+                    stroke="rgba(38, 115, 79, 0.35)"
                     strokeWidth={1}
                     rx={3}
                     onContextMenu={(e) => {
@@ -680,7 +681,8 @@ export function TimelineView() {
       if (!seq) return;
       const el = scrollRef.current;
       if (!el) return;
-      // 命中轨道
+      // 命中轨道（指针必须在某条轨的矩形里）；没命中就按空白处处理——
+      // placeAssetAt 会自己找轨/建轨，用户拖哪儿都能落（剪映语义）
       let hover: Track | null = null;
       for (const node of el.querySelectorAll<HTMLElement>(".tl-track")) {
         const rect = node.getBoundingClientRect();
@@ -690,23 +692,15 @@ export function TimelineView() {
         }
       }
       setDropTrackId(hover?.id ?? null);
-      if (!hover) return;
       const asset = st.project?.assets.find((a) => a.id === info.assetId);
       if (!asset) return;
       const rect = el.getBoundingClientRect();
       const rate = seq.frameRate || 25;
       const rawMs = (info.clientX - rect.left + el.scrollLeft) / pxPerMsRef.current;
       const ms = snapToFrame(Math.max(0, rawMs), rate);
-      // 素材落对轨：听到的进 A、看到的进 V
-      let target = hover;
-      const wanted = asset.kind === "audio" ? "audio" : "video";
-      if (hover.kind !== wanted) {
-        target =
-          seq.tracks.find((t) => t.kind === wanted && t.index === hover.index && !t.locked) ??
-          seq.tracks.find((t) => t.kind === wanted && !t.locked) ??
-          hover;
-      }
-      void placeAssetAt(info.assetId, target.id, ms);
+      // 素材落对轨：听到的进 A、看到的进 V；没有合适的轨就传 null 让后端建
+      const targetId = hover ? resolveAssetTrackId(seq.tracks, asset, hover) : null;
+      void placeAssetAt(info.assetId, targetId, ms);
     };
     return () => {
       assetDragBridge.onDrop = null;
@@ -717,6 +711,24 @@ export function TimelineView() {
   const setZoomLevel = useAppStore((s) => s.setZoomLevel);
   const pxPerMs = zoomLevel;
   const setPxPerMs = setZoomLevel;
+
+  // 拖动吸附的总开关来自偏好设置（「时间线 ▸ 拖动吸附」）。
+  // 关掉之后容差为 0， moves 完全按松手位置摆放——不是摆样子的开关。
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const { getSettings } = await import("../services/settings");
+        const s = await getSettings();
+        setSnapEnabled(s.snapEnabled !== false);
+      } catch {
+        /* 读不到设置就按开启处理 */
+      }
+    })();
+  }, []);
+  /** 吸附容差（毫秒）：开关关掉时为 0 */
+  const snapToleranceMs = snapEnabled ? SNAP_PX / pxPerMs : 0;
+
   const [drag, setDrag] = useState<DragSession | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   /** 拖动片段时指针悬停的可落轨轨道（仅同类型轨道可落） */
@@ -750,8 +762,8 @@ export function TimelineView() {
    * 参数为函数时按最新 session 计算；帧末统一落 ref + setState。
    */
   const pendingFrameRef = useRef<number | null>(null);
-  /** V/A 分区高度比例（0.2~0.8）：中间分割线可拖动调整（剪映同款） */
-  const [vaSplit, setVaSplit] = useState(0.55);
+  /** V/A 分区高度比例（0.15~0.85）：中间分割线可拖动调整（剪映同款）；默认各半 */
+  const [vaSplit, setVaSplit] = useState(0.5);
   /**
    * 播放跟随：播放中播放头快到右边缘时，时间线持续左滚，保持播放头在屏内
    * （剪映同款；拖动 / 缩放时用户自己掌控，不抢滚动）。
@@ -901,8 +913,14 @@ export function TimelineView() {
   const frameRate = sequence.frameRate || 25;
   /** 片段最短时长：一帧 */
   const minClipMs = Math.max(1000 / frameRate, 20);
+  /**
+   * 可梳理时间上限：序列时长再放宽一点尾巴。
+   * 时长严格跟内容走（10s 的片子就是 10s），但播放头要能拖到内容末尾
+   * 之外——不然最后一个片段的出点后面就没法定位、也没法接着排片。
+   */
+  const scrubMaxMs = sequence.durationMs + 5000;
   const contentWidth = Math.max(
-    sequence.durationMs * pxPerMs + TAIL_PADDING_PX,
+    scrubMaxMs * pxPerMs + TAIL_PADDING_PX,
     800
   );
   /** 底部对齐的成对轨道：最高的一对在最上面，V1/A1 贴在最底 */
@@ -911,7 +929,7 @@ export function TimelineView() {
 
   const tickStep = tickStepMs(pxPerMs, frameRate);
   const ticks: number[] = [];
-  for (let t = 0; t <= sequence.durationMs; t += tickStep) ticks.push(t);
+  for (let t = 0; t <= scrubMaxMs; t += tickStep) ticks.push(t);
   /**
    * 密集小刻度（用户要求：顶上一个小刻度一个小刻度）：
    * 主刻度之间再切 5 份画短刻度，缩放时自动变密/变疏；
@@ -922,7 +940,7 @@ export function TimelineView() {
     minorStep * pxPerMs >= 6
       ? (() => {
           const out: number[] = [];
-          for (let t = 0; t <= sequence.durationMs; t += minorStep) {
+          for (let t = 0; t <= scrubMaxMs; t += minorStep) {
             if (Math.abs(t % tickStep) > 1e-6) out.push(t);
           }
           return out;
@@ -1262,7 +1280,7 @@ export function TimelineView() {
   const onRulerPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     setMenu(null);
-    const ms = clamp(clientXToMs(e.clientX), 0, sequence.durationMs);
+    const ms = clamp(clientXToMs(e.clientX), 0, scrubMaxMs);
     setPlayhead(snapToFrame(ms, frameRate));
     beginDrag(e.pointerId, e.clientX, e.clientY, {
       kind: "scrub",
@@ -1376,7 +1394,7 @@ export function TimelineView() {
     if (e.pointerId !== session.pointerId) return;
 
     if (session.kind === "scrub") {
-      const ms = clamp(clientXToMs(e.clientX), 0, sequence.durationMs);
+      const ms = clamp(clientXToMs(e.clientX), 0, scrubMaxMs);
       const at = snapToFrame(ms, frameRate);
       // 拖动滑块手感：同一帧内的多次 move 只提交最后一次（setPlayhead 直调，
       // playhead 是 store 切片，Monitor 侧已有 coalescing，不会堆积渲染请求）
@@ -1420,7 +1438,7 @@ export function TimelineView() {
       const minStart = Math.min(...session.ids.map((id) => session.origins.get(id) ?? 0));
       let delta = Math.max(raw, -minStart);
       // 吸附：片段两端谁靠近参考点就贴谁
-      const tolerance = SNAP_PX / pxPerMs;
+      const tolerance = snapToleranceMs;
       const start = session.baseStart + delta;
       const end = start + session.baseDuration;
       let snapMs: number | null = null;
@@ -1496,7 +1514,7 @@ export function TimelineView() {
 
     const edgeBase =
       session.kind === "trim-in" ? session.baseStart : session.baseStart + session.baseDuration;
-    const tolerance = SNAP_PX / pxPerMs;
+    const tolerance = snapToleranceMs;
     let snapMs: number | null = null;
     let bestDiff = tolerance;
     // 邻片边界钳制（剪映行为）：普通修剪不能盖住同轨相邻片段，
@@ -1565,7 +1583,7 @@ export function TimelineView() {
         pendingBlankRef.current = null;
         const state = useAppStore.getState();
         state.clearSelection();
-        const ms = clamp(clientXToMs(e.clientX), 0, sequence.durationMs);
+        const ms = clamp(clientXToMs(e.clientX), 0, scrubMaxMs);
         setPlayhead(snapToFrame(ms, frameRate));
       }
       return;
@@ -1590,7 +1608,7 @@ export function TimelineView() {
         // 空白处单击：清掉选中，并把播放头挪到点击处
         const state = useAppStore.getState();
         state.clearSelection();
-        const ms = clamp(clientXToMs(e.clientX), 0, sequence.durationMs);
+        const ms = clamp(clientXToMs(e.clientX), 0, scrubMaxMs);
         setPlayhead(snapToFrame(ms, frameRate));
       }
       return;
@@ -1625,13 +1643,38 @@ export function TimelineView() {
           }
         }
       }
+      // 轨道不重叠钳制（用户规则：不能重叠，放不下就贴到邻片边缘）：
+      // 被拖片段与目标轨上其他片段求交，相交就把起点推到最近的空位。
+      const nonOverlap = (clipId: Id, trackId: Id, startMs: number, durationMs: number): number => {
+        const tr = sequence.tracks.find((t) => t.id === trackId);
+        if (!tr) return startMs;
+        const others = tr.clips.filter((c) => c.id !== clipId && !session.ids.includes(c.id));
+        let s = startMs;
+        const e = () => s + durationMs;
+        for (let pass = 0; pass < 4; pass++) {
+          const hit = others.find((c) => s < c.startMs + c.durationMs && e() > c.startMs);
+          if (!hit) break;
+          // 推到更近的一侧：左贴（hit 结束处）或右贴（hit 起点减时长）
+          const pushRight = hit.startMs + hit.durationMs;
+          const pushLeft = hit.startMs - durationMs;
+          s = Math.abs(pushRight - s) <= Math.abs(s - pushLeft) ? pushRight : Math.max(0, pushLeft);
+        }
+        return Math.max(0, s);
+      };
       void moveClipsTo(
-        Array.from(targets.entries()).map(([id, startMs]) => ({
-          id,
-          startMs: startMs + session.deltaMs,
-          // 换轨只作用于被拖的那一段，联动兄弟留在原轨
-          trackId: id === session.clipId ? dstTrack?.id : undefined,
-        }))
+        Array.from(targets.entries()).map(([id, startMs]) => {
+          const newStart = startMs + session.deltaMs;
+          const trackId = id === session.clipId ? dstTrack?.id : undefined;
+          const c = sequence.tracks.flatMap((t) => t.clips).find((x) => x.id === id);
+          const dur = c?.durationMs ?? 0;
+          const finalTrack = trackId ?? sequence.tracks.find((t) => t.clips.some((x) => x.id === id))?.id;
+          return {
+            id,
+            // 换轨只作用于被拖的那一段，联动兄弟留在原轨
+            trackId,
+            startMs: finalTrack ? nonOverlap(id, finalTrack, newStart, dur) : newStart,
+          };
+        })
       );
     } else if (session.kind === "trim-in") {
       // 字幕没有源素材：左端外拉时直接把时长补长，入点保持 0
@@ -1827,22 +1870,31 @@ export function TimelineView() {
 
   /**
    * 素材落轨：听得到的进 A 轨，看得到的进 V 轨。
-   * 拖错层时自动换到同一层的对应轨（V2 上掉音频 → A2），找不到同类轨才原样落下。
+   * 拖错层时自动换到同一层的对应轨（V2 上掉音频 → A2）；
+   * 一条同类轨都没有时返回 null——由 placeAssetAt 新建一条，
+   * 不再硬落在错误类型的轨上（老代码落到 A 轨的视频还是去了 V 轨，
+   * 用户看到的就是「拖到 A 轨却冒出 V 轨」）。
+   *
+   * 轨道表与素材都由调用方显式传入：拖拽桥的 effect 依赖是 []，
+   * 走闭包会抓到首次渲染的空工程快照。
    */
-  const resolveAssetTrack = (track: Track, assetId: Id): Track => {
-    const asset = project.assets.find((a) => a.id === assetId);
-    if (!asset) return track;
+  const resolveAssetTrackId = (
+    tracks: Track[],
+    asset: { id: Id; kind: string } | undefined,
+    track: Track
+  ): Id | null => {
+    if (!asset) return track.id;
     const wanted: Track["kind"] = asset.kind === "audio" ? "audio" : "video";
-    if (track.kind === wanted) return track;
-    const samePair = sequence.tracks.find(
+    if (track.kind === wanted) return track.id;
+    const samePair = tracks.find(
       (t) => t.kind === wanted && t.index === track.index && !t.locked
     );
-    if (samePair) return samePair;
-    const candidates = sequence.tracks.filter((t) => t.kind === wanted && !t.locked);
-    if (candidates.length === 0) return track;
+    if (samePair) return samePair.id;
+    const candidates = tracks.filter((t) => t.kind === wanted && !t.locked);
+    if (candidates.length === 0) return null;
     return candidates.reduce((best, t) =>
       Math.abs(t.index - track.index) < Math.abs(best.index - track.index) ? t : best
-    );
+    ).id;
   };
 
   const onTrackDragOver = (e: React.DragEvent, track: Track) => {
@@ -1877,13 +1929,14 @@ export function TimelineView() {
     // 允许落到序列末尾之后（接着往后排），只挡负数；以前 clamp 到序列时长，
     // 导致「视频放完之后放不进下一个位置」。
     const ms = Math.max(0, clientXToMs(e.clientX));
-    const target = resolveAssetTrack(track, assetId);
-    void placeAssetAt(assetId, target.id, snapToFrame(ms, frameRate));
+    const targetId = resolveAssetTrackId(sequence.tracks, asset, track);
+    void placeAssetAt(assetId, targetId, snapToFrame(ms, frameRate));
   };
 
   /**
    * 整块内容区兜底：指针落在片段条或轨道边缘时，轨道自己的 dragover/drop
-   * 可能收不到（WebView2 命中测试的差异），这里用指针纵坐标反查轨道再走同一套落轨逻辑。
+   * 可能收不到（WebView2 命中测试的差异），这里用指针纵坐标反查轨道再走同一套落轨逻辑；
+   * 连轨道都没命中（拖在空白处）就传 null，由 placeAssetAt 自动找轨/建轨。
    */
   const onContentDragOver = (e: React.DragEvent) => {
     const track = trackAtClientY(e.clientY);
@@ -1892,8 +1945,15 @@ export function TimelineView() {
 
   const onContentDrop = (e: React.DragEvent) => {
     const track = trackAtClientY(e.clientY);
-    if (track) onTrackDrop(e, track);
-    else setDropTrackId(null);
+    setDropTrackId(null);
+    let assetId = e.dataTransfer.getData("application/reelix-asset");
+    if (!assetId) assetId = e.dataTransfer.getData("text/plain");
+    if (!assetId) return;
+    const asset = project.assets.find((a) => a.id === assetId);
+    if (!asset) return;
+    const ms = Math.max(0, clientXToMs(e.clientX));
+    const targetId = track ? resolveAssetTrackId(sequence.tracks, asset, track) : null;
+    void placeAssetAt(assetId, targetId, snapToFrame(ms, frameRate));
   };
 
   /** 拖动中的临时几何：左端与时长，松手后由后端权威数据接管。 */  const clipGeometry = (clip: Clip): { left: number; duration: number } => {
@@ -1916,9 +1976,11 @@ export function TimelineView() {
         <div className="gutter-head" />
         <div className="tl-gutter-body" ref={gutterBodyRef}>
           {/* 轨道从底部往上长，上面空出来的是「还能叠的层」 */}
-          <div className="tl-gutter-spacer" />
+          {/* 轨道从头往下排（与右侧内容区一致）。
+              之前这里有一块 tl-gutter-spacer 把轨道头推到底部，
+              右侧内容区却在顶部——左右错位，于是出现「没轨道的地方冒出一个视频」。 */}
           <div className="tl-gutter-stack">
-<div className="tl-gutter-zone tl-gutter-zone-v">
+<div className="tl-gutter-zone tl-gutter-zone-v" style={{ flex: `1 1 ${vaSplit * 100}%` }}>
             {videoRows.map((row) => (
               <div key={row.key} className="tl-gutter-row">
                 {row.tracks.map((track) => (
@@ -2336,7 +2398,7 @@ export function TimelineView() {
               window.addEventListener("pointerup", up);
             }}
           />
-          <div className="tl-zone tl-zone-a">
+          <div className="tl-zone tl-zone-a" style={{ flex: `1 1 ${(1 - vaSplit) * 100}%` }}>
           <div className="tl-stage">
             {audioRows.map((row) => (
               <div key={row.key} className="tl-row">
@@ -2517,7 +2579,7 @@ export function TimelineView() {
               if (e.button !== 0) return;
               e.stopPropagation();
               setMenu(null);
-              const ms = clamp(clientXToMs(e.clientX), 0, sequence.durationMs);
+              const ms = clamp(clientXToMs(e.clientX), 0, scrubMaxMs);
               setPlayhead(snapToFrame(ms, frameRate));
               beginDrag(e.pointerId, e.clientX, e.clientY, {
                 kind: "scrub",
@@ -2851,7 +2913,7 @@ export function TimelineView() {
                   if (s.selectedClipId) await setClipTransition(s.selectedClipId, "dipToBlack");
                 })}
               >
-                淡出到黑
+                闪黑
               </button>
               <button
                 type="button"
@@ -2861,7 +2923,7 @@ export function TimelineView() {
                   if (s.selectedClipId) await setClipTransition(s.selectedClipId, "dipToWhite");
                 })}
               >
-                淡出到白
+                闪白
               </button>
               <button
                 type="button"
@@ -2872,6 +2934,44 @@ export function TimelineView() {
                 })}
               >
                 清除转场
+              </button>
+            </div>
+          </div>
+          {/* 尾部淡出（剪映「淡出」）：片段末尾向黑/白渐隐，挂在片段属性上 */}
+          <div className="tl-menu-sub-wrap">
+            <button type="button" className="tl-menu-item has-sub">
+              淡出<span className="menu-arrow">›</span>
+            </button>
+            <div className="tl-menu tl-menu-sub">
+              <button
+                type="button"
+                className="tl-menu-item"
+                onClick={() => runMenuAction(async () => {
+                  const s = useAppStore.getState();
+                  if (s.selectedClipId) await setClipTransitionOut(s.selectedClipId, "dipToBlack");
+                })}
+              >
+                淡出到黑
+              </button>
+              <button
+                type="button"
+                className="tl-menu-item"
+                onClick={() => runMenuAction(async () => {
+                  const s = useAppStore.getState();
+                  if (s.selectedClipId) await setClipTransitionOut(s.selectedClipId, "dipToWhite");
+                })}
+              >
+                淡出到白
+              </button>
+              <button
+                type="button"
+                className="tl-menu-item"
+                onClick={() => runMenuAction(async () => {
+                  const s = useAppStore.getState();
+                  if (s.selectedClipId) await setClipTransitionOut(s.selectedClipId, null);
+                })}
+              >
+                清除淡出
               </button>
             </div>
           </div>
@@ -2936,13 +3036,13 @@ export function TimelineView() {
             添加标记<span className="tl-menu-key">M</span>
           </button>
           <div className="tl-menu-sep" />
-          {/* 转场里最高频的两个动作：淡入 / 淡出（0.5 秒不透明度关键帧） */}
+          {/* 转场里最高频的两个动作：淡入 / 淡出（0.5 秒，片段属性不是效果） */}
           <button
             type="button"
             className="tl-menu-item"
             onClick={() => runMenuAction(async () => {
               const s = useAppStore.getState();
-              if (s.selectedClipId) s.addFade(s.selectedClipId, "in");
+              if (s.selectedClipId) await setClipTransition(s.selectedClipId, "dipToBlack", 500);
             })}
           >
             淡入<span className="tl-menu-key">0.5s</span>
@@ -2952,7 +3052,7 @@ export function TimelineView() {
             className="tl-menu-item"
             onClick={() => runMenuAction(async () => {
               const s = useAppStore.getState();
-              if (s.selectedClipId) s.addFade(s.selectedClipId, "out");
+              if (s.selectedClipId) await setClipTransitionOut(s.selectedClipId, "dipToBlack", 500);
             })}
           >
             淡出<span className="tl-menu-key">0.5s</span>

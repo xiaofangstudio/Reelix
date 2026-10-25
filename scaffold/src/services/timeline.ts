@@ -10,7 +10,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { Clip, Id, Track } from "../types/project";
+import type { Clip, Id, SpeedKey, Track } from "../types/project";
 
 /** 往指定轨道加一个片段，返回新片段。compoundId 为视/音频链接组 id（可选） */
 export function addClip(
@@ -49,20 +49,57 @@ export function deleteClips(clipIds: Id[]): Promise<boolean> {
   return invoke<boolean>("delete_clips", { clipIds });
 }
 
-/** 设置片段速度，素材范围不变、时间线时长按速度重算 */
+/** 设置片段速度，素材范围不变、时间线时长按速度重算（会清掉曲线变速） */
 export function setClipSpeed(clipId: Id, speed: number): Promise<boolean> {
   return invoke<boolean>("set_clip_speed", { clipId, speed });
 }
 
-/** 片段开关：启用/禁用、标签色（label 传空串=清除标签） */
+/** 设置 / 清除曲线变速。curve 传 null 或不足两点 = 清除，回落到恒定速度 */
+export function setClipSpeedCurve(
+  clipId: Id,
+  curve: SpeedKey[] | null
+): Promise<boolean> {
+  return invoke<boolean>("set_clip_speed_curve", { clipId, curve });
+}
+
+/** 声音变调开关：true = 变速时音高随速度变（剪映同款）；false = 保调 */
+export function setClipPitchShift(clipId: Id, pitchShift: boolean): Promise<boolean> {
+  return invoke<boolean>("set_clip_pitch_shift", { clipId, pitchShift });
+}
+
+/** 片段开关：启用/禁用、标签色（label 传空串=清除标签）、3D 图层开关 */
 export function setClipFlags(
   clipId: Id,
-  flags: { enabled?: boolean; label?: string }
+  flags: { enabled?: boolean; label?: string; enable3D?: boolean }
 ): Promise<boolean> {
   return invoke<boolean>("set_clip_flags", {
     clipId,
     enabled: flags.enabled ?? null,
     label: flags.label ?? null,
+    // Tauri 参数按 camelCase 对齐 Rust 的 snake_case（enable_3d），
+    // 这里必须是 enable3D；写成 enable3d 会被静默丢掉，3D 开关又变哑巴。
+    enable3D: flags.enable3D ?? null,
+  });
+}
+
+/** 片段的 3D 变换：位置 / 旋转 / 缩放 / 锚点 / 受光。没给的项保留原值。 */
+export function setClipTransform3D(
+  clipId: Id,
+  t: {
+    position?: { x: number; y: number; z: number };
+    rotation?: { x: number; y: number; z: number };
+    scale?: number;
+    anchor?: { x: number; y: number };
+    receiveLight?: boolean;
+  }
+): Promise<boolean> {
+  return invoke<boolean>("set_clip_transform_3d", {
+    clipId,
+    position: t.position ?? null,
+    rotation: t.rotation ?? null,
+    scale: t.scale ?? null,
+    anchor: t.anchor ?? null,
+    receiveLight: t.receiveLight ?? null,
   });
 }
 
@@ -143,6 +180,15 @@ export function setTransition(
   return invoke<boolean>("set_transition", { clipId, kind, durationMs });
 }
 
+/** 设置 / 清除片段尾部淡出（剪映「淡出」，只支持黑场/白场） */
+export function setTransitionOut(
+  clipId: Id,
+  kind: import("../types/project").TransitionKind | null,
+  durationMs = 500
+): Promise<boolean> {
+  return invoke<boolean>("set_clip_transition_out", { clipId, kind, durationMs });
+}
+
 /** 设置音频片段淡入淡出（毫秒，0 表示取消） */
 export function setAudioFade(
   clipId: Id,
@@ -165,4 +211,9 @@ export function setAudioDsp(
     lowpassHz,
     delayMs,
   });
+}
+
+/** 片段倒放开关（剪映同款） */
+export function setClipReversed(clipId: Id, reversed: boolean): Promise<boolean> {
+  return invoke<boolean>("set_clip_reversed", { clipId, reversed });
 }

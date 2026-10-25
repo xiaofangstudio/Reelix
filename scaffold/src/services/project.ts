@@ -47,6 +47,11 @@ export function getProjectPath(): Promise<string | null> {
   return invoke<string | null>("get_project_path");
 }
 
+/** 工程自上次保存后有没有未落盘的改动（自动保存靠它决定要不要写盘） */
+export function projectIsDirty(): Promise<boolean> {
+  return invoke<boolean>("project_is_dirty");
+}
+
 /** 关闭项目并清理相关缓存 */
 export function closeProject(): Promise<boolean> {
   return invoke<boolean>("close_project");

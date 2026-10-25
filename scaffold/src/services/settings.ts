@@ -19,6 +19,22 @@ export interface Settings {
   autoSaveIntervalMs: number;
   /** 界面语言，全中文界面固定 zh-CN */
   language: string;
+  /** 界面主题：light / dark */
+  theme: "light" | "dark";
+  /** 静止图片上轨的默认时长（毫秒） */
+  imageDefaultMs: number;
+  /** 默认转场 / 淡入淡出时长（毫秒） */
+  transitionDefaultMs: number;
+  /** 手动新建字幕、文字的默认时长（毫秒） */
+  subtitleDefaultMs: number;
+  /** 新建工程默认画幅宽 */
+  defaultWidth: number;
+  /** 新建工程默认画幅高 */
+  defaultHeight: number;
+  /** 新建工程默认帧率 */
+  defaultFrameRate: number;
+  /** 时间线自动吸附总开关 */
+  snapEnabled: boolean;
 }
 
 /** 读取设置 */

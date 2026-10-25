@@ -26,6 +26,10 @@ pub mod tracking;
 pub mod gpu;
 pub mod expr;
 
+/// 端到端验真（只在 cargo test 下编译）：拿真实素材证明链路走得通。
+#[cfg(test)]
+mod e2e;
+
 #[cfg(feature = "desktop")]
 use state::AppState;
 
@@ -43,6 +47,7 @@ pub fn run() {
             commands::project::save_project,
             commands::project::get_project,
             commands::project::get_project_path,
+            commands::project::project_is_dirty,
             commands::project::adapt_sequence_to_asset,
             commands::media::make_proxy,
             commands::project::close_project,
@@ -75,14 +80,19 @@ pub fn run() {
             commands::timeline::split_clip,
             commands::timeline::delete_clips,
             commands::timeline::set_clip_speed,
+            commands::timeline::set_clip_speed_curve,
+            commands::timeline::set_clip_pitch_shift,
             commands::timeline::set_clip_flags,
+            commands::timeline::set_clip_transform_3d,
             commands::timeline::unlink_compound,
             commands::timeline::add_track,
             commands::timeline::remove_track,
             commands::timeline::set_track_flags,
             // 时间线：转场 / 音频淡入淡出 / 标记 / 素材箱
             commands::timeline::set_transition,
+            commands::timeline::set_clip_transition_out,
             commands::timeline::set_audio_dsp,
+            commands::timeline::set_clip_reversed,
             commands::timeline::set_audio_fade,
             commands::timeline::add_marker,
             commands::timeline::remove_marker,

@@ -10,13 +10,17 @@
  */
 
 import { useEffect, useState } from "react";
+import { ColorGradeControls } from "./ColorGradePanel";
+import { SpeedCurveEditor } from "./SpeedCurveEditor";
 import { useAppStore, useAssets, useCurrentSequence, useSelectedClip } from "../store/appStore";
 import { msToTimecode } from "../core/timecode";
 import type { Layer3DOrientation } from "../types/project";
 import {
   addSubtitleAtPlayhead,
   generateSubtitlesForClip,
+  refreshProject,
   setClipTransition,
+  setClipTransitionOut,
   updateClipText,
 } from "../store/projectActions";
 import { EffectStack } from "./EffectStack";
@@ -27,12 +31,43 @@ const ORIENTATION_OPTIONS: Array<{ value: Layer3DOrientation; label: string }> =
   { value: "free", label: "自由朝向" },
 ];
 
+/** 调色页门槛：选中片段必须「画面上可见」（视频/字幕轨），音频与摄像机不行。 */
+function ColorGate({ children }: { children: React.ReactNode }) {
+  const clip = useSelectedClip();
+  const sequence = useCurrentSequence();
+  const track = clip && sequence ? sequence.tracks.find((t) => t.id === clip.trackId) : undefined;
+  const visible = !!clip && (track?.kind === "video" || track?.kind === "subtitle");
+  if (!visible) {
+    return (
+      <div className="empty-state">
+        <div className="icon">◐</div>
+        <div className="main-text">当前片段不能调色</div>
+        <div className="sub-text">
+          {clip ? "音频与摄像机不出现在画面上。选中视频、图片或文字片段再来。" : "先选中一个会出现在画面里的片段。"}
+        </div>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
 export function PropertiesPanel() {
   const clip = useSelectedClip();
+  const effects = useAppStore((s) => s.effects);
   const assets = useAssets();
   const sequence = useCurrentSequence();
   const setClip3DEnabled = useAppStore((s) => s.setClip3DEnabled);
   const setClipTransform3D = useAppStore((s) => s.setClipTransform3D);
+
+  /**
+   * 属性面板顶部小页签（剪映式：属性右上就是调色，不占底部 Tab）。
+   * 视频类片段：基础 / 调节 / 变速 / 音频 / 3D；音频片段：变速 / 音频。
+   * 切换片段时页签回落到「基础」。
+   */
+  const [propTab, setPropTab] = useState<string>("basic");
+  useEffect(() => {
+    setPropTab("basic");
+  }, [clip?.id]);
 
   // 没有工程 / 序列时也能显示面板骨架，时间码用默认帧率兜底
   const frameRate = sequence?.frameRate ?? 25;
@@ -56,6 +91,30 @@ export function PropertiesPanel() {
       </div>
 
       <div className="panel-body">
+        {/* 属性面板顶部小页签（剪映式）：调色就住在「调节」页里 */}
+        {clip && (
+          <div className="prop-tabs">
+            {[
+              ["basic", "基础", true],
+              ["grade", "调节", !isCameraClip],
+              ["speed", "变速", !isCameraClip],
+              ["audio", "音频", !isCameraClip],
+              ["3d", "3D", !isCameraClip],
+            ]
+              .filter(([, , show]) => show)
+              .map(([key, label]) => (
+                <button
+                  key={key as string}
+                  type="button"
+                  className={propTab === key ? "on" : ""}
+                  onClick={() => setPropTab(key as string)}
+                >
+                  {label as string}
+                </button>
+              ))}
+          </div>
+        )}
+
         {/* 效果栈永远在最顶部：图层式界面的第一屏就是「这层挂了哪些效果」 */}
         <EffectStack />
 
@@ -197,7 +256,237 @@ export function PropertiesPanel() {
               </div>
             )}
 
+            {/* 淡出：片段末尾向黑/白渐隐。挂在片段属性上，不进效果栈 */}
+            {clip && (
+              <div className="prop-group">
+                <div className="group-title">淡出</div>
+                <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
+                  <span className="label">类型</span>
+                  <select
+                    className="value num"
+                    value={clip.transitionOut?.kind ?? "none"}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      void setClipTransitionOut(
+                        clip.id,
+                        v === "none" ? null : (v as "dipToBlack" | "dipToWhite"),
+                        clip.transitionOut?.durationMs ?? 500
+                      );
+                    }}
+                  >
+                    <option value="none">无</option>
+                    <option value="dipToBlack">淡入黑场</option>
+                    <option value="dipToWhite">淡入白场</option>
+                  </select>
+                </div>
+                {clip.transitionOut && (
+                  <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
+                    <span className="label">时长（ms）</span>
+                    <input
+                      className="value num"
+                      type="number"
+                      min={1}
+                      max={Math.max(1, Math.round(clip.durationMs))}
+                      step={50}
+                      value={clip.transitionOut.durationMs}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (!Number.isNaN(v)) {
+                          void setClipTransitionOut(
+                            clip.id,
+                            clip.transitionOut!.kind,
+                            Math.max(1, Math.min(clip.durationMs, v))
+                          );
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
 
+
+            {propTab === "basic" && <>
+            {/* 基础变换（剪映式：位置/缩放/旋转/不透明度/混合模式/翻转）——
+                改的是效果栈里 transform / opacity 节点的参数，lazy 创建 */}
+            {clip && !isCameraClip && (
+              <div className="group-title-wrap">
+                <div className="group-title">基础</div>
+                {(
+                  [
+                    ["transform", "posX", "位置 X", -2000, 2000],
+                    ["transform", "posY", "位置 Y", -2000, 2000],
+                    ["transform", "scale", "缩放 %", 1, 400],
+                    ["transform", "rotation", "旋转 °", -360, 360],
+                    ["opacity", "opacity", "不透明度 %", 0, 100],
+                  ] as const
+                ).map(([type, key, label, min, max]) => {
+                  const fx = (effects[clip.id] ?? []).find((e) => e.type === type);
+                  const val = fx ? Number(fx.params.find((p) => p.key === key)?.value ?? 0) : type === "opacity" ? 100 : key === "scale" ? 100 : 0;
+                  return (
+                    <div key={type + key} className="prop-row" style={{ gridTemplateColumns: "90px 1fr 44px" }}>
+                      <span className="label">{label}</span>
+                      <input
+                        type="range"
+                        min={min}
+                        max={max}
+                        step={key === "rotation" ? 0.5 : 1}
+                        value={val}
+                        onChange={(e) => {
+                          let eff = (useAppStore.getState().effects[clip.id] ?? []).find((x) => x.type === type);
+                          if (!eff) {
+                            useAppStore.getState().addEffect(clip.id, type);
+                            eff = (useAppStore.getState().effects[clip.id] ?? []).find((x) => x.type === type);
+                          }
+                          if (eff) useAppStore.getState().setEffectParam(eff.id, key, Number(e.target.value));
+                        }}
+                      />
+                      <em className="prop-num">{val}</em>
+                    </div>
+                  );
+                })}
+                <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
+                  <span className="label">混合模式</span>
+                  <select
+                    className="value"
+                    value={(() => {
+                      const fx = (effects[clip.id] ?? []).find((e) => e.type === "blendSingle");
+                      return String(fx?.params.find((p) => p.key === "mode")?.value ?? "normal");
+                    })()}
+                    onChange={(e) => {
+                      let eff = (useAppStore.getState().effects[clip.id] ?? []).find((x) => x.type === "blendSingle");
+                      if (!eff) {
+                        useAppStore.getState().addEffect(clip.id, "blendSingle");
+                        eff = (useAppStore.getState().effects[clip.id] ?? []).find((x) => x.type === "blendSingle");
+                      }
+                      if (eff) useAppStore.getState().setEffectParam(eff.id, "mode", e.target.value);
+                    }}
+                  >
+                    {["normal", "multiply", "screen", "overlay", "darken", "lighten"].map((m) => (
+                      <option key={m} value={m}>
+                        {{ normal: "正常", multiply: "正片叠底", screen: "滤色", overlay: "叠加", darken: "变暗", lighten: "变亮" }[m]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr 1fr" }}>
+                  <span className="label">镜像</span>
+                  <button
+                    type="button"
+                    className={`ctl-btn${(effects[clip.id] ?? []).find((e) => e.type === "mirror" && e.params.find((p) => p.key === "axis")?.value === "h") ? " on" : ""}`}
+                    onClick={() => {
+                      const st = useAppStore.getState();
+                      const ex = (st.effects[clip.id] ?? []).find((e) => e.type === "mirror" && e.params.find((p) => p.key === "axis")?.value === "h");
+                      if (ex) st.removeEffect(ex.id);
+                      else st.addEffect(clip.id, "mirror");
+                    }}
+                  >
+                    左右翻转
+                  </button>
+                  <button
+                    type="button"
+                    className={`ctl-btn${(effects[clip.id] ?? []).find((e) => e.type === "mirror" && e.params.find((p) => p.key === "axis")?.value === "v") ? " on" : ""}`}
+                    onClick={() => {
+                      const st = useAppStore.getState();
+                      const ex = (st.effects[clip.id] ?? []).find((e) => e.type === "mirror" && e.params.find((p) => p.key === "axis")?.value === "v");
+                      if (ex) st.removeEffect(ex.id);
+                      else {
+                        st.addEffect(clip.id, "mirror");
+                        const created = (useAppStore.getState().effects[clip.id] ?? []).slice(-1)[0];
+                        if (created) st.setEffectParam(created.id, "axis", "v");
+                      }
+                    }}
+                  >
+                    上下翻转
+                  </button>
+                </div>
+              </div>
+            )}
+            </>}
+
+            {/* 调节页 = 调色（色轮/色阶/快捷 + 示波器 + 颜色占比）。
+                门槛（用户规则）：只对画面可见片段开放，音频与摄像机显示引导文案 */}
+            {propTab === "grade" && (
+              <ColorGate>
+                <ColorGradeControls />
+              </ColorGate>
+            )}
+            {propTab === "speed" && <>
+            {/* 变速（剪映式：速度滑条 + 倒放开关 + 声音变调 + 曲线变速） */}
+            {clip && !isCameraClip && (
+              <div className="group-title-wrap">
+                <div className="group-title">变速</div>
+                <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr 44px" }}>
+                  <span className="label">速度 ×</span>
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={4}
+                    step={0.05}
+                    value={clip.speed}
+                    onChange={(e) => {
+                      void (async () => {
+                        try {
+                          const { timeline } = await import("../services");
+                          await timeline.setClipSpeed(clip.id, Number(e.target.value));
+                          await refreshProject();
+                        } catch (err) {
+                          useAppStore.getState().pushNotice("error", err instanceof Error ? err.message : String(err));
+                        }
+                      })();
+                    }}
+                  />
+                  <em className="prop-num">{clip.speed.toFixed(2)}</em>
+                </div>
+                <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
+                  <span className="label">倒放</span>
+                  <button
+                    type="button"
+                    className={`ctl-btn${clip.reversed ? " on" : ""}`}
+                    onClick={() => {
+                      void (async () => {
+                        try {
+                          const { timeline } = await import("../services");
+                          await timeline.setClipReversed(clip.id, !clip.reversed);
+                          await refreshProject();
+                        } catch (err) {
+                          useAppStore.getState().pushNotice("error", err instanceof Error ? err.message : String(err));
+                        }
+                      })();
+                    }}
+                  >
+                    {clip.reversed ? "已倒放" : "正常播放"}
+                  </button>
+                </div>
+                {/* 声音变调（剪映同款）：开 = 音高随速度变；关 = 保调 */}
+                <div className="prop-row" style={{ gridTemplateColumns: "90px 1fr" }}>
+                  <span className="label">声音变调</span>
+                  <button
+                    type="button"
+                    className={`ctl-btn${clip.audioPitchShift ? " on" : ""}`}
+                    title="开：变速时音高随速度一起变（剪映默认）；关：只改速度不改音高（专业保调）"
+                    onClick={() => {
+                      void (async () => {
+                        try {
+                          const { timeline } = await import("../services");
+                          await timeline.setClipPitchShift(clip.id, !clip.audioPitchShift);
+                          await refreshProject();
+                        } catch (err) {
+                          useAppStore.getState().pushNotice("error", err instanceof Error ? err.message : String(err));
+                        }
+                      })();
+                    }}
+                  >
+                    {clip.audioPitchShift ? "已开启（音随速变）" : "关闭（保调）"}
+                  </button>
+                </div>
+                {/* 曲线变速：折线改速度，片段时长按积分重算 */}
+                <SpeedCurveEditor clip={clip} />
+              </div>
+            )}
+            </>}
+
+            {propTab === "audio" && <>
             {/* 音频处理：高通/低通/回声（混音时真滤波，用户要求的传统 DSP） */}
             {clip && !isCameraClip && (
               <div className="prop-group">
@@ -252,7 +541,9 @@ export function PropertiesPanel() {
                 </div>
               </div>
             )}
+            </>}
 
+            {propTab === "3d" && <>
             {/* 图层 3D：仅视频/图片等图层片段可勾选，摄像机片段不显示（docs/09 第 2.3 节） */}
             {isLayerClip && (
               <div className="prop-group">
@@ -404,6 +695,7 @@ export function PropertiesPanel() {
                 )}
               </div>
             )}
+            </>}
           </>
         )}
       </div>
