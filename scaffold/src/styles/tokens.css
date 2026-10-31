@@ -11,12 +11,14 @@
 :root,
 [data-theme="light"] {
   /* 底层：近白（微绿，字幕/白字可读）+ 浅灰绿 */
-  --rl-bg: #fbfcfb;
-  --rl-surface: #f7faf8;
-  --rl-surface-2: #eef4f0;
-  --rl-surface-3: #e2ece6;
-  --rl-border: #d7e2dc;
-  --rl-border-strong: #b5c8be;
+  /* 纯白背景：层级不靠「底色变灰」区分，靠 border + 阴影。
+     这是视觉干净的关键——灰底会显得脏，纯白 + 阴影才有「纸片叠起来」的层次。 */
+  --rl-bg: #ffffff;
+  --rl-surface: #ffffff;
+  --rl-surface-2: #fafbfa;
+  --rl-surface-3: #f3f6f4;
+  --rl-border: #e4e9e6;
+  --rl-border-strong: #c3d0c9;
 
   /* 文字 */
   --rl-text: #101418;
@@ -117,8 +119,12 @@
   --rl-gutter-w: 96px;
 
   /* 阴影：浅色下用极轻的投影 */
-  --rl-shadow: 0 1px 2px rgba(16, 20, 24, 0.05), 0 4px 12px rgba(16, 20, 24, 0.04);
-  --rl-shadow-pop: 0 8px 28px rgba(16, 20, 24, 0.12);
+  --rl-shadow: 0 1px 2px rgba(16, 20, 24, 0.06), 0 6px 18px rgba(16, 20, 24, 0.06);
+  --rl-shadow-pop: 0 10px 34px rgba(16, 20, 24, 0.14);
+  /* 三级层次：卡片 / 浮层 / 对话框，越往上投影越重 */
+  --rl-shadow-1: 0 1px 2px rgba(16, 20, 24, 0.05);
+  --rl-shadow-2: 0 2px 6px rgba(16, 20, 24, 0.06), 0 8px 20px rgba(16, 20, 24, 0.05);
+  --rl-shadow-3: 0 12px 40px rgba(16, 20, 24, 0.16);
 
   --rl-focus-ring: 0 0 0 2px var(--rl-bg), 0 0 0 4px var(--rl-accent-line);
 }

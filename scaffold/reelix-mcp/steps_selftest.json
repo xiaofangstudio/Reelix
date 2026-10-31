@@ -1,0 +1,7 @@
+[
+  { "tool": "new_project", "args": { "name": "接入自检" } },
+  { "tool": "import_media", "args": { "path": "C:/Users/ASUS/Videos/小组作业/jason go to school.mp4", "addToTimeline": true } },
+  { "tool": "add_node", "args": { "nodeType": "camera" } },
+  { "tool": "add_subtitle", "args": { "text": "MCP 已接通，这条字幕由 MCP 写入", "startMs": 0, "durationMs": 2000 } },
+  { "tool": "get_timeline" }
+]

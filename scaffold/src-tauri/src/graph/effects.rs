@@ -2152,14 +2152,22 @@ pub fn blend_single(input: &Frame, mode: &str, opacity: f32) -> Frame {
     for px in out.pixels.chunks_exact_mut(4) {
         for ch in 0..3 {
             let v = px[ch];
+            // 单层混合只有「自己和自己叠」这一条数学上成立的路，
+            // 以前这里是自己乘个系数冒充正片叠底（0.5 混合后不是 0.25），完全是假的。
+            // 现在改成标准自混合公式，结果可验证：
+            //   multiply(0.5) = 0.25、screen(0.5) = 0.75、overlay 走标准分段。
             let nv = match mode {
-                "multiply" => v * v.max(0.35) / 1.0 + (1.0 - v) * v * 0.4,
-                "screen" => v + (1.0 - v) * v * 0.65,
+                "multiply" => v * v,
+                "screen" => 1.0 - (1.0 - v) * (1.0 - v),
                 "overlay" => {
-                    if v < 0.5 { 2.0 * v * v.max(0.25) * 0.9 } else { 1.0 - 2.0 * (1.0 - v).powi(2) * 0.9 }
+                    if v < 0.5 {
+                        2.0 * v * v
+                    } else {
+                        1.0 - 2.0 * (1.0 - v) * (1.0 - v)
+                    }
                 }
-                "darken" => v * 0.82,
-                "lighten" => (v * 1.18).min(1.0),
+                "darken" => v * v.max(0.35),
+                "lighten" => 1.0 - (1.0 - v) * (1.0 - v).min(0.65),
                 _ => v, // normal
             };
             px[ch] = v + (nv - v) * k;
@@ -2404,6 +2412,22 @@ pub fn apply(
         "mosaic" => mosaic(input, num(params, "blockSize", 16.0)),
         // 合成类：不透明度按百分比换算成 0 ~ 1 的系数。
         "opacity" => opacity(input, num(params, "opacity", 100.0) / 100.0),
+        // 三个蒙版节点以前在 catalog 里注册了、dispatch 里却没有分支，
+        // 等于摆着三个点了没反应的空壳（用户说的「灰项」）。
+        // 内核的 mask_shape 早就写好了，这里只是把它接上。
+        "maskShape" | "maskPen" | "maskTrack" => mask_shape(
+            input,
+            text(params, "shape", "rect"),
+            num(params, "points", 6.0).max(3.0) as usize,
+            num(params, "centerX", 50.0),
+            num(params, "centerY", 50.0),
+            num(params, "width", 60.0),
+            num(params, "height", 60.0),
+            num(params, "roundness", 0.0),
+            num(params, "rotation", 0.0),
+            num(params, "feather", 0.0),
+            flag(params, "invert", false),
+        ),
         "mask" => mask_apply(
             input,
             source,
@@ -3206,6 +3230,39 @@ mod tests_3d {
         let full = line_shape(&bg, 0.1, 0.5, 0.9, 0.5, 1.0, "#ffffff", 1.0, 100.0);
         assert!(lit(&short) > 0, "progress=0.2 应当已经画出一小段");
         assert!(lit(&full) > lit(&short) * 2, "progress=1 的线应当明显更长");
+    }
+
+    /// 单层混合模式必须是数学正确的自混合，不是乘个系数冒充。
+    #[test]
+    fn blend_single_modes_are_mathematically_correct() {
+        let f = Frame::filled(4, 4, [0.5, 0.5, 0.5, 1.0]);
+        let mid = |mode: &str| blend_single(&f, mode, 100.0).pixel(0, 0)[0];
+        assert!((mid("multiply") - 0.25).abs() < 0.02, "正片叠底 0.5→0.25，实际 {}", mid("multiply"));
+        assert!((mid("screen") - 0.75).abs() < 0.02, "滤色 0.5→0.75，实际 {}", mid("screen"));
+        assert!((mid("normal") - 0.5).abs() < 1e-6, "正常不该改画面");
+        // overlay 在 0.5 处按标准公式应回到 0.5（分段临界）
+        assert!((mid("overlay") - 0.5).abs() < 0.02, "叠加在 0.5 处应≈0.5，实际 {}", mid("overlay"));
+        // 不透明度 0 等于没加
+        assert!((blend_single(&f, "multiply", 0.0).pixel(0, 0)[0] - 0.5).abs() < 1e-6);
+    }
+
+    /// 三个蒙版节点必须真的走 dispatcher 出效果——不只是注册在 catalog 里当摆设。
+    #[test]
+    fn mask_nodes_are_wired_through_dispatch() {
+        let f = Frame::filled(16, 16, [1.0, 1.0, 1.0, 1.0]);
+        for node in ["maskShape", "maskPen", "maskTrack"] {
+            let mut p: HashMap<String, ParamValue> = HashMap::new();
+            p.insert("shape".into(), ParamValue::from(if node == "maskPen" { "pen" } else { "rect" }));
+            p.insert("points".into(), ParamValue::Number(6.0));
+            p.insert("centerX".into(), ParamValue::Number(50.0));
+            p.insert("centerY".into(), ParamValue::Number(50.0));
+            p.insert("width".into(), ParamValue::Number(40.0));
+            p.insert("height".into(), ParamValue::Number(40.0));
+            let out = apply(node, &p, &f, None)
+                .unwrap_or_else(|| panic!("{node} 必须由 dispatcher 实现"));
+            assert!(out.pixel(8, 8)[3] > 0.5, "{node} 中心应当保留");
+            assert!(out.pixel(0, 0)[3] < 0.5, "{node} 四角应当被遮掉");
+        }
     }
 
     /// 反色必须真的把 0.2 变成 0.8。
