@@ -342,7 +342,7 @@ export function StartScreen() {
         {/* 底部信息：版权与版本，和启动页同一套口径 */}
         <footer className="start-footer">
           <span>© 2026 小方工作室 · XiaoFang Studio</span>
-          <span className="start-footer-ver">Reelix 1.1.2 · 本地渲染引擎（ffmpeg）</span>
+          <span className="start-footer-ver">Reelix 1.1.3 · 本地渲染引擎（ffmpeg）</span>
         </footer>
       </div>
     </div>

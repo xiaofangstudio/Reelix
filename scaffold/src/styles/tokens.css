@@ -11,14 +11,16 @@
 :root,
 [data-theme="light"] {
   /* 底层：近白（微绿，字幕/白字可读）+ 浅灰绿 */
-  /* 纯白背景：层级不靠「底色变灰」区分，靠 border + 阴影。
-     这是视觉干净的关键——灰底会显得脏，纯白 + 阴影才有「纸片叠起来」的层次。 */
-  --rl-bg: #ffffff;
-  --rl-surface: #ffffff;
-  --rl-surface-2: #fafbfa;
-  --rl-surface-3: #f3f6f4;
-  --rl-border: #e4e9e6;
-  --rl-border-strong: #c3d0c9;
+  /* 取自 FangUI（D://20533//deskbox//fangwork//fangui/src/core/tokens.css）：
+     画布是微暖灰 #f0f1ee，**面板反而更白 #f8f8f6**。
+     纯白 #ffffff 太刺眼（用户原话「辣眼睛」），而层级的关键也不是「越往下越灰」，
+     而是「卡片比底白 + 一层薄阴影」—— 纸片浮在桌面上，而不是嵌进灰坑里。 */
+  --rl-bg: #f0f1ee;
+  --rl-surface: #f8f8f6;
+  --rl-surface-2: #f2f2f0;
+  --rl-surface-3: #ebebe9;
+  --rl-border: #e4e4e2;
+  --rl-border-strong: #d8d8d6;
 
   /* 文字 */
   --rl-text: #101418;
